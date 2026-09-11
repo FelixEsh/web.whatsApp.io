@@ -28,15 +28,34 @@ Un setup puede además quedar **INVALIDADO** (el precio vuelve a cerrar dentro) 
 
 ## Instalación
 
+Los 8 ficheros van **en la misma carpeta**. No hay que tocar `MQL5\Include`:
+los `#include` son relativos al fichero, así que todo se resuelve dentro de la
+propia carpeta del indicador.
+
+1. En MetaTrader 5: **Archivo → Abrir carpeta de datos**.
+   Esto es importante: MT5 **no** usa la carpeta de `Archivos de programa`, sino
+   una carpeta de datos en `AppData`. Copiar ahí es el error de instalación más
+   frecuente.
+2. Entra en `MQL5\Indicators\` y crea la carpeta `BreakoutIntelligence`.
+3. Copia dentro los 8 ficheros:
+
 ```
-<Terminal MT5>/MQL5/Indicators/BreakoutIntelligence/BreakoutIntelligence.mq5
-<Terminal MT5>/MQL5/Include/BreakoutIntelligence/BI_*.mqh
+MQL5/Indicators/BreakoutIntelligence/
+├── BreakoutIntelligence.mq5   <- este es el que se compila
+├── BI_Types.mqh
+├── BI_Utils.mqh
+├── BI_Profile.mqh
+├── BI_Levels.mqh
+├── BI_Engine.mqh
+├── BI_Alerts.mqh
+└── BI_Render.mqh
 ```
 
-Abre el `.mq5` en MetaEditor y pulsa **F7**. La ruta de `Include` es obligatoria:
-los `#include` usan `<BreakoutIntelligence/BI_*.mqh>`.
+4. Abre `BreakoutIntelligence.mq5` en MetaEditor y pulsa **F7**.
+5. En el Navegador de MT5, botón derecho → **Actualizar**, y arrastra el
+   indicador al gráfico.
 
----
+Si aparece `file '...' not found`, es que los `.mqh` no están junto al `.mq5`.
 
 ## Uso recomendado
 

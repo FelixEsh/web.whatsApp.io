@@ -5,9 +5,9 @@
 #ifndef __BI_RENDER_MQH__
 #define __BI_RENDER_MQH__
 
-#include <BreakoutIntelligence/BI_Types.mqh>
-#include <BreakoutIntelligence/BI_Utils.mqh>
-#include <BreakoutIntelligence/BI_Engine.mqh>
+#include "BI_Types.mqh"
+#include "BI_Utils.mqh"
+#include "BI_Engine.mqh"
 
 //+------------------------------------------------------------------+
 //| Creacion / actualizacion de una linea de tendencia               |

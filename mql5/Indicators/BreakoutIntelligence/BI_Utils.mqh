@@ -5,7 +5,7 @@
 #ifndef __BI_UTILS_MQH__
 #define __BI_UTILS_MQH__
 
-#include <BreakoutIntelligence/BI_Types.mqh>
+#include "BI_Types.mqh"
 
 //+------------------------------------------------------------------+
 //| Limita un entero al intervalo [lo, hi]                           |

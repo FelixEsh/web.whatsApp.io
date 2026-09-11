@@ -495,7 +495,7 @@ check("los umbrales son monotonos",
 # acoplamiento con el codigo MQL5: los topes deben seguir estando en el fuente
 import io, os
 eng = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        '..', 'Include', 'BreakoutIntelligence', 'BI_Engine.mqh')).read()
+                        '..', 'Indicators', 'BreakoutIntelligence', 'BI_Engine.mqh')).read()
 check("el fuente sigue acotando el score a 0..100", 'BI_ClampInt(total,0,100)' in eng)
 check("el fuente sigue acotando la calidad del cierre a 0..15", 'BI_ClampInt(pts,0,15)' in eng)
 

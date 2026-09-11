@@ -67,31 +67,42 @@ o la prueba dejará de significar nada.
 
 ## 2. Compilación
 
-1. Copia el contenido de `mql5/Indicators/` en `<Terminal>/MQL5/Indicators/` y el
-   de `mql5/Include/` en `<Terminal>/MQL5/Include/`. La estructura debe quedar:
+Los 8 ficheros van **en la misma carpeta**. Los `#include` son relativos
+(`#include "BI_Types.mqh"`), no del sistema (`<...>`), así que **no** hay que
+copiar nada en `MQL5\Include`.
+
+1. En MetaTrader 5: **Archivo → Abrir carpeta de datos**. MT5 no usa la carpeta
+   de `Archivos de programa` sino una carpeta de datos en `AppData`; copiar en
+   la carpeta equivocada es el error de instalación más frecuente.
+2. Crea `MQL5\Indicators\BreakoutIntelligence\` y copia dentro:
 
 ```
-MQL5/Indicators/BreakoutIntelligence/BreakoutIntelligence.mq5
-MQL5/Include/BreakoutIntelligence/BI_Types.mqh
-MQL5/Include/BreakoutIntelligence/BI_Utils.mqh
-MQL5/Include/BreakoutIntelligence/BI_Profile.mqh
-MQL5/Include/BreakoutIntelligence/BI_Levels.mqh
-MQL5/Include/BreakoutIntelligence/BI_Engine.mqh
-MQL5/Include/BreakoutIntelligence/BI_Alerts.mqh
-MQL5/Include/BreakoutIntelligence/BI_Render.mqh
+MQL5/Indicators/BreakoutIntelligence/
+├── BreakoutIntelligence.mq5
+├── BI_Types.mqh
+├── BI_Utils.mqh
+├── BI_Profile.mqh
+├── BI_Levels.mqh
+├── BI_Engine.mqh
+├── BI_Alerts.mqh
+└── BI_Render.mqh
 ```
 
-   La ruta de `Include` importa: los `#include` usan
-   `<BreakoutIntelligence/BI_*.mqh>`.
+3. Abre `BreakoutIntelligence.mq5` en MetaEditor y pulsa **F7**.
 
-2. Abre `BreakoutIntelligence.mq5` en MetaEditor y pulsa **F7**.
-3. Si aparece algún error, pásamelo literalmente con el número de línea. Los
-   puntos más probables de fallo, por orden, son:
-   - `input group` (requiere build razonablemente moderno del terminal),
-   - métodos `const` de las clases,
-   - los códigos Wingdings de las flechas (son estéticos, no funcionales).
+### Errores de instalación frecuentes
 
----
+| Error de MetaEditor | Causa |
+|---|---|
+| `file 'BI_Types.mqh' not found` | Los `.mqh` no están en la misma carpeta que el `.mq5` |
+| `file 'Include\BreakoutIntelligence\BI_Types.mqh' not found` | Versión antigua con includes `<...>`; usa esta, que los lleva relativos |
+| `OnCalculate function not found in custom indicator` | **Cascada**: un `#include` falló y el compilador abortó antes de llegar a `OnCalculate`. Arregla el include y desaparece |
+| El indicador no sale en el Navegador | Falta **Actualizar** (botón derecho en el Navegador) o se copió en la carpeta de instalación en vez de la de datos |
+
+Si aparece algún error que no sea de instalación, pásamelo literal con su número
+de línea. Los puntos más probables, por orden: `input group` (requiere un build
+razonablemente moderno del terminal), los métodos `const` de las clases, y los
+códigos Wingdings de las flechas (estéticos, no funcionales).
 
 ## 3. Pruebas funcionales en MetaTrader
 

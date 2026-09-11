@@ -13,13 +13,13 @@
 #property indicator_buffers 8
 #property indicator_plots   8
 
-#include <BreakoutIntelligence/BI_Types.mqh>
-#include <BreakoutIntelligence/BI_Utils.mqh>
-#include <BreakoutIntelligence/BI_Profile.mqh>
-#include <BreakoutIntelligence/BI_Levels.mqh>
-#include <BreakoutIntelligence/BI_Engine.mqh>
-#include <BreakoutIntelligence/BI_Alerts.mqh>
-#include <BreakoutIntelligence/BI_Render.mqh>
+#include "BI_Types.mqh"
+#include "BI_Utils.mqh"
+#include "BI_Profile.mqh"
+#include "BI_Levels.mqh"
+#include "BI_Engine.mqh"
+#include "BI_Alerts.mqh"
+#include "BI_Render.mqh"
 
 //--- Plot 0: ruptura alcista
 #property indicator_label1  "Ruptura alcista"

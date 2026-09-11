@@ -9,8 +9,8 @@
 #ifndef __BI_ALERTS_MQH__
 #define __BI_ALERTS_MQH__
 
-#include <BreakoutIntelligence/BI_Types.mqh>
-#include <BreakoutIntelligence/BI_Utils.mqh>
+#include "BI_Types.mqh"
+#include "BI_Utils.mqh"
 
 class CBIAlerts
   {

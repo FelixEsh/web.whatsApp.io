@@ -137,7 +137,7 @@ def check_balance(name, code, errs):
         errs.append(f"{name}:{ln}: '{ch}' sin cerrar")
 
 def main():
-    files = sorted(glob.glob(os.path.join(ROOT, 'Include', '**', '*.mqh'), recursive=True)) + \
+    files = sorted(glob.glob(os.path.join(ROOT, 'Indicators', '**', '*.mqh'), recursive=True)) + \
             sorted(glob.glob(os.path.join(ROOT, 'Indicators', '**', '*.mq5'), recursive=True))
     errs, warns = [], []
 

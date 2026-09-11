@@ -5,8 +5,8 @@
 #ifndef __BI_LEVELS_MQH__
 #define __BI_LEVELS_MQH__
 
-#include <BreakoutIntelligence/BI_Types.mqh>
-#include <BreakoutIntelligence/BI_Utils.mqh>
+#include "BI_Types.mqh"
+#include "BI_Utils.mqh"
 
 //+------------------------------------------------------------------+
 //| Pivote maximo en la barra p.                                     |

@@ -19,10 +19,10 @@
 #ifndef __BI_ENGINE_MQH__
 #define __BI_ENGINE_MQH__
 
-#include <BreakoutIntelligence/BI_Types.mqh>
-#include <BreakoutIntelligence/BI_Utils.mqh>
-#include <BreakoutIntelligence/BI_Profile.mqh>
-#include <BreakoutIntelligence/BI_Levels.mqh>
+#include "BI_Types.mqh"
+#include "BI_Utils.mqh"
+#include "BI_Profile.mqh"
+#include "BI_Levels.mqh"
 
 //+------------------------------------------------------------------+
 //| Copia un buffer de indicador a un array alineado por la derecha  |
