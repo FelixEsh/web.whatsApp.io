@@ -27,6 +27,9 @@
 #property copyright "BI Validator (solo validacion, no opera)"
 #property version   "1.00"
 #property description "Validador read-only de BreakoutIntelligence via iCustom. Cero trading."
+//--- Dependencia del Strategy Tester: como la ruta de iCustom es un input (runtime),
+//--- el Tester no la autodetecta; hay que declarar el .ex5 para que el agente lo copie.
+#property tester_indicator "BreakoutIntelligence\\BreakoutIntelligence.ex5"
 
 //--- Indices de buffer del indicador (orden real verificado en el .mq5)
 #define BUF_BREAK_UP   0
