@@ -29,7 +29,7 @@
 #property description "Validador read-only de BreakoutIntelligence via iCustom. Cero trading."
 //--- Dependencia del Strategy Tester: como la ruta de iCustom es un input (runtime),
 //--- el Tester no la autodetecta; hay que declarar el .ex5 para que el agente lo copie.
-#property tester_indicator "BreakoutIntelligence\\BreakoutIntelligence.ex5"
+#property tester_indicator "BreakoutIntelligence.ex5"
 
 //--- Indices de buffer del indicador (orden real verificado en el .mq5)
 #define BUF_BREAK_UP   0
@@ -43,7 +43,7 @@
 
 enum ENUM_BL { BL_OFF=0, BL_WRITE=1, BL_COMPARE=2 };
 
-input string          InpIndicatorPath = "BreakoutIntelligence\\BreakoutIntelligence"; // Ruta iCustom (relativa a MQL5/Indicators)
+input string          InpIndicatorPath = "BreakoutIntelligence"; // Ruta iCustom (relativa a MQL5/Indicators; instalacion plana)
 input ENUM_TIMEFRAMES InpContextTF     = PERIOD_H4;      // Contexto (2o input del indicador)
 input ENUM_TIMEFRAMES InpStructureTF   = PERIOD_H1;      // Estructura (3er input del indicador)
 input int             InpHistoryBars   = 3000;           // Velas M15 cerradas a observar
