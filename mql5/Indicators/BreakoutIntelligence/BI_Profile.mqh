@@ -164,25 +164,33 @@ SBIProfileDefaults BI_ProfileDefaults(const int profile)
   }
 
 //+------------------------------------------------------------------+
-//| Resuelve la ventana horaria de sesion (horas del SERVIDOR).      |
-//| Los valores por defecto asumen un servidor en GMT+0; usa         |
-//| shiftHours para adaptarlos al servidor real del broker.          |
+//| Resuelve hasta DOS ventanas de sesion en HORARIO DE SERVIDOR.    |
+//|                                                                  |
+//| El usuario indica las horas de Londres y Nueva York tal como las |
+//| ve en su servidor (no en UTC). No se aplica ningun ajuste de     |
+//| horario de verano: si el broker cambia de offset, el usuario     |
+//| ajusta las horas. Esto elimina el "shift" ambiguo anterior.      |
+//|                                                                  |
+//|   LONDON  -> ventana 1 = Londres                                 |
+//|   NEWYORK -> ventana 1 = Nueva York                              |
+//|   LDN_NY  -> ventana 1 = Londres, ventana 2 = Nueva York         |
+//|   CUSTOM  -> ventana 1 = horario personalizado                   |
+//| Ventana no utilizada -> start=end=-1.                            |
 //+------------------------------------------------------------------+
-void BI_ResolveSessionHours(const int filter,const int customStart,const int customEnd,
-                            const int shiftHours,int &startHour,int &endHour)
+void BI_ResolveSessions(const int filter,
+                        const int lonStart,const int lonEnd,
+                        const int nyStart,const int nyEnd,
+                        const int cusStart,const int cusEnd,
+                        int &s1,int &e1,int &s2,int &e2)
   {
+   s1=-1; e1=-1; s2=-1; e2=-1;
    switch(filter)
      {
-      case BI_SESS_LONDON:  startHour=7;  endHour=16; break;
-      case BI_SESS_NEWYORK: startHour=12; endHour=21; break;
-      case BI_SESS_LDN_NY:  startHour=7;  endHour=21; break;
-      case BI_SESS_CUSTOM:  startHour=customStart; endHour=customEnd; break;
-      default:              startHour=0;  endHour=0;  break;
-     }
-   if(filter!=BI_SESS_OFF)
-     {
-      startHour=((startHour+shiftHours)%24+24)%24;
-      endHour  =((endHour  +shiftHours)%24+24)%24;
+      case BI_SESS_LONDON:  s1=lonStart; e1=lonEnd; break;
+      case BI_SESS_NEWYORK: s1=nyStart;  e1=nyEnd;  break;
+      case BI_SESS_LDN_NY:  s1=lonStart; e1=lonEnd; s2=nyStart; e2=nyEnd; break;
+      case BI_SESS_CUSTOM:  s1=cusStart; e1=cusEnd; break;
+      default:              break;   // OFF: ninguna ventana
      }
   }
 

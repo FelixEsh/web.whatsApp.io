@@ -124,6 +124,7 @@ private:
    string m_symbol;
    ENUM_TIMEFRAMES m_tf;
    ENUM_TIMEFRAMES m_tfCtx;
+   ENUM_TIMEFRAMES m_tfStruct;
    int    m_profile;
 
 public:
@@ -131,7 +132,8 @@ public:
                     ~CBIRender(void) {}
 
    void              Configure(const string symbol,const ENUM_TIMEFRAMES tf,
-                               const ENUM_TIMEFRAMES tfCtx,const int digits,const int profile,
+                               const ENUM_TIMEFRAMES tfCtx,const ENUM_TIMEFRAMES tfStruct,
+                               const int digits,const int profile,
                                const bool showLevels,const bool showRange,const bool showZones,
                                const bool showPanel,const int maxLevels,
                                const int panelX,const int panelY,const int fontSize);
@@ -145,18 +147,19 @@ CBIRender::CBIRender(void)
   {
    m_showLevels=true; m_showRange=true; m_showZones=true; m_showPanel=true;
    m_maxLevels=8; m_panelX=12; m_panelY=18; m_fontSize=9;
-   m_digits=_Digits; m_symbol=_Symbol; m_tf=PERIOD_CURRENT; m_tfCtx=PERIOD_H4;
+   m_digits=_Digits; m_symbol=_Symbol; m_tf=PERIOD_CURRENT; m_tfCtx=PERIOD_H4; m_tfStruct=PERIOD_H1;
    m_profile=BI_PROFILE_AUTO;
   }
 
 //+------------------------------------------------------------------+
 void CBIRender::Configure(const string symbol,const ENUM_TIMEFRAMES tf,
-                          const ENUM_TIMEFRAMES tfCtx,const int digits,const int profile,
+                          const ENUM_TIMEFRAMES tfCtx,const ENUM_TIMEFRAMES tfStruct,
+                          const int digits,const int profile,
                           const bool showLevels,const bool showRange,const bool showZones,
                           const bool showPanel,const int maxLevels,
                           const int panelX,const int panelY,const int fontSize)
   {
-   m_symbol=symbol; m_tf=tf; m_tfCtx=tfCtx; m_digits=digits; m_profile=profile;
+   m_symbol=symbol; m_tf=tf; m_tfCtx=tfCtx; m_tfStruct=tfStruct; m_digits=digits; m_profile=profile;
    m_showLevels=showLevels; m_showRange=showRange; m_showZones=showZones;
    m_showPanel=showPanel; m_maxLevels=maxLevels;
    m_panelX=panelX; m_panelY=panelY; m_fontSize=fontSize;
@@ -286,7 +289,7 @@ void CBIRender::DrawStatus(CBIEngine &eng,const string extraLine)
    string lines[9];
    lines[0]="Breakout Intelligence MT5 v"+BI_VERSION;
    lines[1]=m_symbol+" "+BI_TfText(m_tf)+"  |  contexto "+BI_TfText(m_tfCtx)+
-            "  |  perfil "+BI_ProfileText(m_profile);
+            "  |  estructura "+BI_TfText(m_tfStruct)+"  |  perfil "+BI_ProfileText(m_profile);
 
    const int trend=eng.TrendState(last);
    lines[2]=StringFormat("ATR %s  ratio %.2f  |  contexto EMA: %s",
@@ -311,19 +314,21 @@ void CBIRender::DrawStatus(CBIEngine &eng,const string extraLine)
    else
       lines[4]="Estado: sin setup vivo";
 
-   //--- ultimo setup confirmado
+   //--- ultima senal confirmada (desde el historico, P3)
    lines[5]="Ultima senal confirmada: ninguna";
-   for(int i=eng.SetupCount()-1;i>=0;i--)
+   for(int i=eng.SignalCount()-1;i>=0;i--)
      {
-      SBISetup s=eng.SetupAt(i);
-      if(s.state!=BI_ST_CONFIRMED) continue;
+      SBISignal g=eng.SignalAt(i);
+      if(g.type!=BI_EV_ENTRY) continue;
       lines[5]=StringFormat("Ultima senal: %s  score %d/100 (%s)  %s",
-                            BI_SideText(s.dir),s.score,BI_GradeText(s.score),
-                            TimeToString(eng.BarTime(s.confirmIdx),TIME_DATE|TIME_MINUTES));
+                            BI_SideText(g.dir),g.score,BI_GradeText(g.score),
+                            TimeToString(g.barTime,TIME_DATE|TIME_MINUTES));
       break;
      }
 
-   lines[6]="Volumen: "+(eng.VolumeUsable()?"disponible":"no utilizable")+
+   lines[6]="Volumen: "+(eng.VolumeUsable()
+                          ? (eng.VolumeIsTick()?"TICK (del broker, no de mercado)":"REAL")
+                          : "no utilizable")+
             "  |  RSI "+DoubleToString(eng.Rsi(last),1);
    lines[7]=(extraLine=="" ? "El score es una clasificacion interna, no una probabilidad." : extraLine);
    lines[8]="Indicador de analisis y alertas: no abre operaciones.";

@@ -6,7 +6,7 @@
 //|  operaciones. Todas las senales se generan sobre velas CERRADAS. |
 //+------------------------------------------------------------------+
 #property copyright "Breakout Intelligence MT5"
-#property version   "1.00"
+#property version   "1.10"
 #property description "Rango -> Ruptura -> Validacion -> Retesteo -> Confirmacion -> Alerta"
 #property description "Senales calculadas solo sobre velas cerradas. No es un sistema automatico."
 #property indicator_chart_window
@@ -65,7 +65,8 @@
 //+------------------------------------------------------------------+
 input group "=== Contexto y perfil ==="
 input ENUM_BI_PROFILE  InpProfile            = BI_PROFILE_AUTO; // Perfil de activo
-input ENUM_TIMEFRAMES  InpContextTF          = PERIOD_H4;       // Timeframe de contexto (EMA)
+input ENUM_TIMEFRAMES  InpContextTF          = PERIOD_H4;       // Timeframe de contexto (EMA 200)
+input ENUM_TIMEFRAMES  InpStructureTF        = PERIOD_H1;       // Timeframe de estructura/zonas (0=grafico)
 input int              InpMaxHistoryBars     = 3000;            // Barras de historico a procesar
 
 input group "=== Estructura y niveles ==="
@@ -126,12 +127,15 @@ input int              InpRsiPeriod          = 14;     // Periodo del RSI
 input double           InpRsiBullMin         = 50.0;   // RSI minimo para rupturas alcistas
 input double           InpRsiBearMax         = 50.0;   // RSI maximo para rupturas bajistas
 
-input group "=== Sesion ==="
+input group "=== Sesion (HORAS DEL SERVIDOR del broker) ==="
 input ENUM_BI_SESSION_FILTER InpSessionFilter = BI_SESS_OFF; // Filtro de sesion
 input bool             InpSessionHardFilter  = false;  // Sesion como filtro duro
-input int              InpSessionShiftHours  = 0;      // Ajuste horario del servidor (horas)
-input int              InpSessCustomStart    = 7;      // Sesion personalizada: hora inicio
-input int              InpSessCustomEnd      = 21;     // Sesion personalizada: hora fin
+input int              InpLondonStart        = 8;      // Londres: hora inicio (servidor)
+input int              InpLondonEnd          = 17;     // Londres: hora fin (servidor)
+input int              InpNewYorkStart       = 13;     // Nueva York: hora inicio (servidor)
+input int              InpNewYorkEnd         = 22;     // Nueva York: hora fin (servidor)
+input int              InpSessCustomStart    = 8;      // Personalizada: hora inicio (servidor)
+input int              InpSessCustomEnd      = 22;     // Personalizada: hora fin (servidor)
 
 input group "=== Vigilancia y puntuacion ==="
 input double           InpWatchDistATR       = 0.0;    // Distancia de aviso x ATR (0=perfil)
@@ -200,6 +204,8 @@ void BuildParams()
    g_par.symbol    = _Symbol;
    g_par.tfSignal  = (ENUM_TIMEFRAMES)Period();
    g_par.tfContext = (InpContextTF==PERIOD_CURRENT ? (ENUM_TIMEFRAMES)Period() : InpContextTF);
+   g_par.tfStructure = (InpStructureTF==PERIOD_CURRENT ? (ENUM_TIMEFRAMES)Period() : InpStructureTF);
+   g_par.useStructTF = (PeriodSeconds(g_par.tfStructure)>PeriodSeconds((ENUM_TIMEFRAMES)Period()));
    g_par.profile   = g_profile;
 
    g_par.pivotDepth      = BI_ClampInt(InpPivotDepth,1,20);
@@ -259,8 +265,11 @@ void BuildParams()
    g_par.asiaEndHour   = BI_ClampInt(InpAsiaEndHour,0,23);
 
    g_par.sessionFilter     = (int)InpSessionFilter;
-   g_par.sessStartHour     = BI_ClampInt(InpSessCustomStart,0,23);
-   g_par.sessEndHour       = BI_ClampInt(InpSessCustomEnd,0,23);
+   BI_ResolveSessions((int)InpSessionFilter,
+                      BI_ClampInt(InpLondonStart,0,23),BI_ClampInt(InpLondonEnd,0,23),
+                      BI_ClampInt(InpNewYorkStart,0,23),BI_ClampInt(InpNewYorkEnd,0,23),
+                      BI_ClampInt(InpSessCustomStart,0,23),BI_ClampInt(InpSessCustomEnd,0,23),
+                      g_par.sess1Start,g_par.sess1End,g_par.sess2Start,g_par.sess2End);
    g_par.sessionHardFilter = InpSessionHardFilter;
 
    g_par.minScoreAlert = BI_ClampInt(InpMinScoreAlert,0,100);
@@ -333,7 +342,7 @@ int OnInit()
 
    BuildParams();
 
-   if(!g_engine.Init(g_par,InpSessionShiftHours))
+   if(!g_engine.Init(g_par))
      {
       Print("Breakout Intelligence: fallo de inicializacion -> ",g_engine.LastError());
       return(INIT_FAILED);
@@ -347,7 +356,7 @@ int OnInit()
                       g_par.minScoreAlert);
    g_alerts.ResetHistory();
 
-   g_render.Configure(_Symbol,(ENUM_TIMEFRAMES)Period(),g_par.tfContext,_Digits,g_profile,
+   g_render.Configure(_Symbol,(ENUM_TIMEFRAMES)Period(),g_par.tfContext,g_par.tfStructure,_Digits,g_profile,
                       InpShowLevels,InpShowRange,InpShowZones,InpShowPanel,
                       BI_ClampInt(InpMaxLevelsDrawn,0,40),
                       InpPanelX,InpPanelY,BI_ClampInt(InpFontSize,6,20));
@@ -399,52 +408,38 @@ void FillBuffers(const int rates_total,const double &high[],const double &low[])
    const int offset=rates_total-engN;          // indice de grafico = offset + indice de motor
    if(offset<0) return;
 
-   const int sc=g_engine.SetupCount();
-   for(int i=0;i<sc;i++)
+   //--- P3: las flechas se llenan desde el HISTORICO de senales, no desde los
+   //    setups vivos (limitados a 32). Asi ninguna senal antigua desaparece.
+   const int nsig=g_engine.SignalCount();
+   for(int i=0;i<nsig;i++)
      {
-      SBISetup s=g_engine.SetupAt(i);
+      SBISignal g=g_engine.SignalAt(i);
+      const int ci=offset+g.barIdx;
+      if(ci<0 || ci>=rates_total) continue;
 
-      //--- ruptura
-      if(s.breakIdx>=0)
+      if(g.type==BI_EV_BREAKOUT)
         {
-         const int ci=offset+s.breakIdx;
-         if(ci>=0 && ci<rates_total)
-           {
-            const double a=g_engine.Atr(s.breakIdx)*0.5;
-            if(s.dir>0) BufBreakUp[ci]=low[ci]-a;
-            else        BufBreakDn[ci]=high[ci]+a;
-           }
+         const double a=g_engine.Atr(g.barIdx)*0.5;
+         if(g.dir>0) BufBreakUp[ci]=low[ci]-a;
+         else        BufBreakDn[ci]=high[ci]+a;
         }
-
-      //--- retesteo
-      if(s.retestIdx>=0)
+      else if(g.type==BI_EV_RETEST)
         {
-         const int ci=offset+s.retestIdx;
-         if(ci>=0 && ci<rates_total)
-           {
-            const double a=g_engine.Atr(s.retestIdx)*0.35;
-            if(s.dir>0) BufRetestUp[ci]=low[ci]-a;
-            else        BufRetestDn[ci]=high[ci]+a;
-           }
+         const double a=g_engine.Atr(g.barIdx)*0.35;
+         if(g.dir>0) BufRetestUp[ci]=low[ci]-a;
+         else        BufRetestDn[ci]=high[ci]+a;
         }
-
-      //--- setup confirmado
-      if(s.state==BI_ST_CONFIRMED && s.confirmIdx>=0)
+      else if(g.type==BI_EV_ENTRY)
         {
-         const int ci=offset+s.confirmIdx;
-         if(ci>=0 && ci<rates_total)
-           {
-            const double a=g_engine.Atr(s.confirmIdx)*0.8;
-            if(s.dir>0) BufEntryUp[ci]=low[ci]-a;
-            else        BufEntryDn[ci]=high[ci]+a;
-            BufScore[ci]=(double)s.score;
-            BufState[ci]=(double)(s.dir>0 ? 1 : -1);
-           }
+         const double a=g_engine.Atr(g.barIdx)*0.8;
+         if(g.dir>0) BufEntryUp[ci]=low[ci]-a;
+         else        BufEntryDn[ci]=high[ci]+a;
+         BufScore[ci]=(double)g.score;
+         BufState[ci]=(double)(g.dir>0 ? 1 : -1);
         }
      }
   }
 
-//+------------------------------------------------------------------+
 //| Despacho de alertas de la ultima barra cerrada                   |
 //+------------------------------------------------------------------+
 void DispatchAlerts()

@@ -1,4 +1,4 @@
-# Breakout Intelligence MT5 v1.00
+# Breakout Intelligence MT5 v1.10
 
 Indicador de MetaTrader 5 para detectar rupturas de rangos y niveles relevantes,
 filtrar las rupturas débiles y avisar cuando aparece una configuración que cumple
@@ -59,16 +59,17 @@ Si aparece `file '...' not found`, es que los `.mqh` no están junto al `.mq5`.
 
 ## Uso recomendado
 
-| Timeframe | Papel |
-|---|---|
-| H4 | Contexto (`InpContextTF`) |
-| H1 | Zonas y estructura principal |
-| M15 | Gráfico de trabajo: ruptura, retesteo y confirmación |
-| M5 | Opcional, para afinar |
+| Timeframe | Papel | Input |
+|---|---|---|
+| H4 | Contexto de tendencia (EMA 200) | `InpContextTF` |
+| H1 | Zonas y estructura | `InpStructureTF` |
+| M15 | Gráfico de trabajo: ruptura, retesteo y confirmación | (gráfico) |
+| M5 | Opcional, para afinar | (gráfico) |
 
-Configuración de partida: abrir en **M15** con `InpContextTF = PERIOD_H4` y dejar
-en `0` todos los parámetros marcados «(0=perfil)» para que el indicador use los
-valores del activo detectado.
+Configuración de partida: abrir en **M15** con `InpContextTF = PERIOD_H4` y
+`InpStructureTF = PERIOD_H1` (valores por defecto). Las zonas se calculan sobre H1
+y se proyectan en M15 sin look-ahead. Deja en `0` los parámetros «(0=perfil)» para
+que el indicador use los valores del activo detectado.
 
 ---
 
@@ -81,8 +82,10 @@ valores del activo detectado.
 | `InpMinBodyRatio` | Cuerpo mínimo de la vela de ruptura. Es el filtro anti-mecha |
 | `InpRequireRetest` | `true` exige retesteo antes de confirmar (recomendado) |
 | `InpMinScoreAlert` | Score mínimo para lanzar la alerta de entrada |
+| `InpStructureTF` | Timeframe de zonas/estructura (H1). Debe ser superior al gráfico |
+| `InpRequireRetest` | `true` exige penetración real de la zona antes de confirmar |
 | `InpEmaHardFilter` | Si es `true`, veta las rupturas contra la EMA de contexto |
-| `InpSessionShiftHours` | Ajuste del horario del servidor del broker respecto a GMT |
+| `InpLondonStart/End`, `InpNewYorkStart/End` | Horas de sesión en **horario del servidor** |
 
 Cualquier parámetro numérico a `0` toma el valor por defecto del perfil del
 activo. Cualquier otro valor sobrescribe el perfil.
@@ -94,6 +97,8 @@ activo. Cualquier otro valor sobrescribe el perfil.
 El *score* 0–100 es una **clasificación interna según los filtros**, no una
 probabilidad de acierto. Un 90 no significa 90 % de aciertos.
 
+El score está **normalizado sobre los filtros realmente activos**: un filtro
+desactivado no suma ni resta (la sesión OFF ya no infla el resultado).
 A ≥ 80 · B 65–79 · C 50–64 · D < 50. Desglose completo en
 [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
 
@@ -101,6 +106,8 @@ A ≥ 80 · B 65–79 · C 50–64 · D < 50. Desglose completo en
 
 ## Documentación
 
+- [`CHANGELOG.md`](CHANGELOG.md) — qué cambió en v1.10 respecto a v1.00, prioridad
+  a prioridad.
 - [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) — definición numérica de cada
   concepto, política anti-repintado, anti-duplicados, perfiles y limitaciones.
 - [`docs/PRUEBAS.md`](docs/PRUEBAS.md) — qué está verificado, qué no, cómo

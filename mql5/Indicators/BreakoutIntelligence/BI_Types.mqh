@@ -5,12 +5,13 @@
 #ifndef __BI_TYPES_MQH__
 #define __BI_TYPES_MQH__
 
-#define BI_VERSION        "1.00"
+#define BI_VERSION        "1.10"
 #define BI_OBJ_PREFIX     "BI_"
 #define BI_MAX_LEVELS     120
 #define BI_MAX_SETUPS     32
 #define BI_MAX_EVENTS     256
 #define BI_ALERT_RING     64
+#define BI_MAX_STRUCT     600
 
 //--- Direccion de la operativa detectada
 enum ENUM_BI_DIR
@@ -133,11 +134,13 @@ struct SBISetup
    int      endIdx;        // barra de cierre del ciclo
    int      confirmKind;   // ENUM_BI_CONFIRM_KIND
    bool     touchedZone;   // el retesteo penetro realmente la zona
+   bool     retestReal;    // hubo un retesteo genuino (no confirmacion directa)
    double   breakClose;
    double   breakMargin;
    double   atrAtBreak;
    double   slPrice;
    double   tpPrice;
+   bool     slValid;       // el SL/TP calculado es coherente y presentable
    int      scLevel;
    int      scClose;
    int      scTrend;
@@ -146,7 +149,8 @@ struct SBISetup
    int      scConfirm;
    int      scSession;
    int      scVolume;
-   int      score;
+   int      scoreMax;      // maximo alcanzable segun filtros/estado activos
+   int      score;         // 0-100 normalizado sobre scoreMax
   };
 
 //+------------------------------------------------------------------+
@@ -177,7 +181,9 @@ struct SBIParams
    //--- contexto
    string          symbol;
    ENUM_TIMEFRAMES tfSignal;
-   ENUM_TIMEFRAMES tfContext;
+   ENUM_TIMEFRAMES tfContext;        // contexto de tendencia (EMA), p.ej. H4
+   ENUM_TIMEFRAMES tfStructure;      // estructura/zonas, p.ej. H1 (0 = grafico)
+   bool            useStructTF;      // tfStructure != grafico
    int             profile;          // ENUM_BI_PROFILE resuelto
 
    //--- estructura
@@ -243,10 +249,12 @@ struct SBIParams
    int             asiaStartHour;
    int             asiaEndHour;
 
-   //--- sesion
+   //--- sesion (horas del SERVIDOR del broker; sin conversion ni DST)
    int             sessionFilter;    // ENUM_BI_SESSION_FILTER
-   int             sessStartHour;
-   int             sessEndHour;
+   int             sess1Start;       // ventana 1 (Londres): hora inicio
+   int             sess1End;         // ventana 1: hora fin
+   int             sess2Start;       // ventana 2 (Nueva York): -1 si no se usa
+   int             sess2End;
    bool            sessionHardFilter;
 
    //--- puntuacion y riesgo
@@ -257,6 +265,28 @@ struct SBIParams
    //--- ejecucion
    int             maxHistoryBars;
    int             maxActiveSetups;
+  };
+
+
+//+------------------------------------------------------------------+
+//| Senal historica (registro persistente e independiente del cap de |
+//| setups vivos). Cada BREAKOUT / RETEST / ENTRY que ocurre en la   |
+//| ventana procesada queda aqui para representarse aunque el setup  |
+//| que la genero ya haya sido reciclado.                            |
+//+------------------------------------------------------------------+
+struct SBISignal
+  {
+   int      type;        // ENUM_BI_EVENT (solo BREAKOUT/RETEST/ENTRY)
+   int      dir;
+   int      barIdx;      // indice interno del motor
+   datetime barTime;
+   double   level;
+   double   sl;
+   double   tp;
+   bool     slValid;
+   int      score;
+   int      confirmKind;
+   int      setupId;
   };
 
 #endif // __BI_TYPES_MQH__

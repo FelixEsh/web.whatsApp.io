@@ -77,22 +77,19 @@ bool BI_HourInWindow(const int hour,const int startHour,const int endHour)
   }
 
 //+------------------------------------------------------------------+
-//| Sesion favorable segun la configuracion                          |
-//| NOTA: las horas son horas del SERVIDOR del broker.               |
+//| Sesion favorable segun hasta DOS ventanas horarias.              |
+//|                                                                  |
+//| IMPORTANTE: las horas son horas del SERVIDOR del broker. No hay  |
+//| conversion a UTC ni ajuste de horario de verano; el usuario      |
+//| define las horas que correspondan a su servidor. Una ventana con |
+//| start==end==-1 se considera no utilizada.                        |
 //+------------------------------------------------------------------+
-bool BI_InSession(const datetime t,const int filter,const int startHour,const int endHour)
+bool BI_InWindows(const datetime t,const int s1,const int e1,const int s2,const int e2)
   {
-   if(filter==BI_SESS_OFF)
-      return(true);
    const int h=BI_HourOf(t);
-   switch(filter)
-     {
-      case BI_SESS_LONDON:  return(BI_HourInWindow(h,startHour,endHour));
-      case BI_SESS_NEWYORK: return(BI_HourInWindow(h,startHour,endHour));
-      case BI_SESS_LDN_NY:  return(BI_HourInWindow(h,startHour,endHour));
-      case BI_SESS_CUSTOM:  return(BI_HourInWindow(h,startHour,endHour));
-     }
-   return(true);
+   if(s1>=0 && e1>=0 && BI_HourInWindow(h,s1,e1)) return(true);
+   if(s2>=0 && e2>=0 && BI_HourInWindow(h,s2,e2)) return(true);
+   return(false);
   }
 
 //+------------------------------------------------------------------+

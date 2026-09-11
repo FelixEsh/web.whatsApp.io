@@ -30,7 +30,7 @@ una función sin `return`, un `MathMax` asignado a `int` y un campo de estructur
 sin inicializar) y los detectó los cinco. Un verificador que nunca salta no
 sirve de nada.
 
-### Pruebas de lógica — `tools/logic_model_test.py` (31 comprobaciones, 0 fallos)
+### Pruebas de lógica — `tools/logic_model_test.py` (64 comprobaciones, 0 fallos)
 
 | Bloque | Qué comprueba |
 |---|---|
@@ -43,7 +43,12 @@ sirve de nada.
 | 7 · Pivotes | Máximo/mínimo aislado, una meseta da **un** pivote, el pivote solo es conocible desde `p+D` |
 | 8 · Niveles | Fusiona dentro de tolerancia, no fusiona lejos, acumula toques, respeta el tope de anchura de zona, un nivel roto no absorbe toques |
 | 9 · Reactivación | Tras invalidar, el mismo nivel puede volver a romperse; tras caducar, **no** |
-| 10 · Puntuación | Los máximos suman exactamente 100, el parcial de ruptura tope 70, clasificación A/B/C/D sin huecos, y los topes siguen presentes en el fuente MQL5 |
+| 10 · Puntuación | Normalizada: máximo 100 con todo activo, sesión OFF → denominador 95 (no infla), ruptura → 70, A/B/C/D sin huecos, acoplada al fuente |
+| 11 · Retest estricto | Aproximación sin toque → sin ENTRY → EXPIRED; penetración real → ENTRY |
+| 12 · Estructura H1→M15 | Mapeo temporal exacto sin look-ahead (pivote conocible sólo tras cerrar `sp+depth`) |
+| 13 · Histórico | >32 setups: todas las entradas se conservan; buffers desde el histórico de señales |
+| 14 · Sesiones | Dos ventanas en horario de servidor, solape LDN_NY, cruce de medianoche; sin shift |
+| 15 · SL/TP | Rechaza lado equivocado, riesgo mínimo y distancia < stops level del broker |
 
 Ejecución:
 

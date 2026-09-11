@@ -155,7 +155,7 @@ def main():
 
     # --- definiciones del proyecto
     proj_funcs = set(re.findall(r'\b(?:void|int|double|bool|string|long|color|datetime|'
-                                r'SBILevel|SBISetup|SBIEvent|SBIParams|SBIProfileDefaults)\s+'
+                                r'SBILevel|SBISetup|SBIEvent|SBISignal|SBIParams|SBIProfileDefaults)\s+'
                                 r'(?:\w+::)?(\w+)\s*\(', all_code))
     class_methods = set(re.findall(r'\b\w+::(\w+)\s*\(', all_code))
     proj_funcs |= class_methods
@@ -258,7 +258,7 @@ def main():
 
     # --- 7) firmas: const y parametros deben coincidir declaracion/definicion
     RETT = (r'(?:void|int|double|bool|string|long|color|datetime|'
-            r'SBILevel|SBISetup|SBIEvent|SBIProfileDefaults)')
+            r'SBILevel|SBISetup|SBIEvent|SBISignal|SBIProfileDefaults)')
     for cls in ['CBIEngine', 'CBILevels', 'CBIAlerts', 'CBIRender']:
         mm = re.search(r'class\s+' + cls + r'\b(.*?)\n\s*\};', all_code, re.S)
         if not mm:
@@ -285,7 +285,7 @@ def main():
     # --- 8) toda funcion con valor de retorno debe terminar en return
     #        (void queda excluido: no devuelve nada)
     RETV = (r'(?:int|double|bool|string|long|color|datetime|'
-            r'SBILevel|SBISetup|SBIEvent|SBIProfileDefaults)')
+            r'SBILevel|SBISetup|SBIEvent|SBISignal|SBIProfileDefaults)')
     for f in files:
         code = codes[f]
         for m in re.finditer(r'^' + RETV + r'\s+(?:\w+::)?(\w+)\s*\([^;{]*\)\s*'
@@ -330,6 +330,9 @@ def main():
                 end = code.find('\n  }', m.end())
                 tail = code[m.end():end if end > 0 else len(code)]
                 assigned = set(re.findall(r'\b' + var + r'\.(\w+)\s*=', tail))
+                # tambien cuenta campos pasados por referencia (out-params):
+                # p.ej. BI_ResolveSessions(...,g_par.sess1Start,...)
+                assigned |= set(re.findall(r'\b' + var + r'\.(\w+)\s*[,)]', tail))
                 if len(assigned) < 3:
                     continue                       # no es un relleno de estructura
                 missing = [x for x in fields if x not in assigned]

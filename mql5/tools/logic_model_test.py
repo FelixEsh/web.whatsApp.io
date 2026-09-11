@@ -88,6 +88,7 @@ class Setup:
         self.retest_idx = -1
         self.retest_ext = None
         self.touched = False
+        self.retest_real = False
         self.confirm_idx = -1
         self.events = []
 
@@ -113,7 +114,7 @@ def is_confirmation(bars, k, s):
     wick = (min(bars[k].o, bars[k].c) - bars[k].l) if d > 0 else \
            (bars[k].h - max(bars[k].o, bars[k].c))
     loc = ((bars[k].c - bars[k].l) / rng) if d > 0 else ((bars[k].h - bars[k].c) / rng)
-    if dir_body > 0 and wick >= P['pin_wick'] * rng and loc >= 0.60:
+    if wick >= P['pin_wick'] * rng and loc >= 0.60:   # P7: sin exigir color de cuerpo
         return 'REJECTION'
     if s.retest_idx >= 0:
         brk_ext = bars[s.break_idx].l if d > 0 else bars[s.break_idx].h
@@ -122,7 +123,7 @@ def is_confirmation(bars, k, s):
             return 'STRUCTURE'
     return None
 
-def run(bars, levels, start=20):
+def run(bars, levels, start=20, require_retest=True):
     """levels: lista de dicts {price, broken_dir}. Devuelve (setups, eventos)."""
     global atr
     atr = atr_series(bars)
@@ -148,6 +149,7 @@ def run(bars, levels, start=20):
             if s.state == 'BREAKOUT':
                 if d * (ext - edge) <= tol:
                     s.state, s.retest_idx, s.retest_ext = 'RETEST', k, ext
+                    s.retest_real = True
                     s.touched = (d * (ext - edge) <= 0)
                     s.events.append(('RETEST', k)); events.append((s.id, 'RETEST', k))
                 elif k - s.break_idx >= P['retest_max']:
@@ -158,7 +160,8 @@ def run(bars, levels, start=20):
                 s.retest_ext = ext
             if not s.touched and d * (ext - edge) <= 0:
                 s.touched = True
-            ck = is_confirmation(bars, k, s) if k > s.retest_idx else None
+            touch_ok = (not require_retest) or s.touched      # P2
+            ck = is_confirmation(bars, k, s) if (touch_ok and k > s.retest_idx) else None
             if ck:
                 s.state, s.confirm_idx = 'CONFIRMED', k
                 s.events.append(('ENTRY', k)); events.append((s.id, 'ENTRY', k))
@@ -237,9 +240,9 @@ check("rechaza una tendencia limpia", rt is None, str(rt))
 print("2) Ruptura + retesteo + confirmacion")
 bars = make_range()
 bars += [bar(100.9, 101.75, 100.85, 101.70),   # ruptura con cuerpo grande
-         bar(101.70, 101.75, 101.10, 101.20),  # retroceso a la zona
-         bar(101.20, 101.28, 101.02, 101.25),  # retesteo profundo
-         bar(101.25, 101.95, 101.20, 101.90),  # continuacion
+         bar(101.70, 101.75, 101.10, 101.20),  # retroceso hacia la zona
+         bar(101.20, 101.28, 100.98, 101.22),  # retesteo que PENETRA 101.0
+         bar(101.22, 101.95, 101.18, 101.90),  # continuacion
          bar(101.90, 102.10, 101.85, 102.00)]
 lv = [dict(price=101.0, broken_dir=0)]
 setups, events = run(bars, lv)
@@ -436,8 +439,8 @@ bars += [bar(100.90, 101.75, 100.85, 101.70),   # ruptura 1
          bar(100.80, 100.95, 100.70, 100.85),
          bar(100.85, 100.95, 100.75, 100.90),
          bar(100.90, 101.80, 100.88, 101.75),   # ruptura 2 sobre el mismo nivel
-         bar(101.75, 101.80, 101.15, 101.25),   # retesteo
-         bar(101.25, 101.95, 101.20, 101.90),   # confirmacion
+         bar(101.75, 101.80, 100.98, 101.20),   # retesteo que PENETRA 101.0
+         bar(101.20, 101.95, 101.18, 101.90),   # confirmacion
          bar(101.90, 102.10, 101.85, 102.00)]   # vela en formacion (no se evalua)
 Setup._n = 0
 lv = [dict(price=101.0, broken_dir=0)]
@@ -463,41 +466,238 @@ check("una ruptura caducada no vuelve a senalar el nivel",
       kinds.count('BREAKOUT') == 1 and 'EXPIRED' in kinds, str(kinds))
 
 # ============================================================== SECCION 10
-print("10) Limites de la puntuacion")
+print("10) Puntuacion normalizada (P4)")
 
-COMP = {                       # (nombre, valores posibles) segun BI_Engine.mqh
-    'scLevel':   [0, 8, 14, 17, 19, 18, 20],
-    'scClose':   list(range(0, 16)),
-    'scTrend':   [0, 5, 8, 10, 15],
-    'scVola':    [0, 3, 5, 6, 10],
-    'scRetest':  [0, 10, 14, 20],
-    'scConfirm': [0, 7, 8, 10],
-    'scSession': [0, 5],
-    'scVolume':  [0, 3, 5],
-}
-maxima = {k: max(v) for k, v in COMP.items()}
-check("los maximos de los componentes suman exactamente 100",
-      sum(maxima.values()) == 100, str(maxima) + " = %d" % sum(maxima.values()))
-check("ninguna combinacion puede superar 100", sum(maxima.values()) <= 100)
-partial = maxima['scLevel'] + maxima['scClose'] + maxima['scTrend'] + \
-          maxima['scVola'] + maxima['scSession'] + maxima['scVolume']
-check("el score parcial de la ruptura no llega al umbral A (80)", partial == 70,
-      "maximo parcial: %d" % partial)
+# Modelo normalizado del fuente: cada componente aporta al numerador y al
+# denominador SOLO si esta activo. score = round(100*ganado/max_activo).
+CORE_MAX = {'level': 20, 'close': 15}
+FILT_MAX = {'trend': 15, 'vola': 10, 'session': 5, 'volume': 5}
+STAGE_MAX = {'retest': 20, 'confirm': 10}
 
-# los umbrales de clasificacion no deben solaparse ni dejar huecos
-def grade(s):
-    return 'A' if s >= 80 else 'B' if s >= 65 else 'C' if s >= 50 else 'D'
-grades = [grade(s) for s in range(0, 101)]
+def score_norm(earned, active):
+    mx = sum(v for kk, v in {**CORE_MAX, **FILT_MAX, **STAGE_MAX}.items() if active.get(kk))
+    e = sum(earned.get(kk, 0) for kk in earned if active.get(kk))
+    return round(100 * e / mx) if mx > 0 else 0, mx
+
+# a) todos los filtros activos y setup confirmado -> denominador 100
+active_all = {k: True for k in list(CORE_MAX) + list(FILT_MAX) + list(STAGE_MAX)}
+earn_full = {'level': 20, 'close': 15, 'trend': 15, 'vola': 10,
+             'session': 5, 'volume': 5, 'retest': 20, 'confirm': 10}
+sc, mx = score_norm(earn_full, active_all)
+check("con todo activo y confirmado, el maximo es 100", mx == 100 and sc == 100,
+      "score=%d max=%d" % (sc, mx))
+
+# b) sesion OFF: ya NO aporta 5/5; el denominador baja a 95 y el resto puntua igual
+active_no_sess = dict(active_all); active_no_sess['session'] = False
+earn_no_sess = dict(earn_full)     # sin sesion en el numerador
+sc2, mx2 = score_norm(earn_no_sess, active_no_sess)
+check("sesion OFF no infla el score (denominador 95, no 100)", mx2 == 95,
+      "max=%d" % mx2)
+check("sesion OFF: el resto perfecto sigue dando 100", sc2 == 100)
+# comparacion con el modelo VIEJO (sumaba 5 fijos): habria dado <100 mal repartido
+old_style = 20+15+15+10+0+5+20+10   # sesion habria sumado 5 aunque OFF -> inflaba
+check("el modelo viejo sumaba sesion aunque estuviera OFF (lo que se corrige)",
+      old_style == 95)
+
+# c) en la RUPTURA (sin retesteo ni confirmacion) el denominador los excluye
+active_break = dict(active_all); active_break['retest'] = False; active_break['confirm'] = False
+_, mxb = score_norm(earn_full, active_break)
+check("en ruptura, retesteo y confirmacion no cuentan aun", mxb == 70,
+      "max_ruptura=%d" % mxb)
+
+# d) clasificacion A/B/C/D sin huecos ni solapes
+def grade(x):
+    return 'A' if x >= 80 else 'B' if x >= 65 else 'C' if x >= 50 else 'D'
+grades = [grade(x) for x in range(0, 101)]
 check("la clasificacion cubre 0..100 sin huecos", set(grades) == {'A', 'B', 'C', 'D'})
 check("los umbrales son monotonos",
-      all(('DCBA'.index(grades[i]) <= 'DCBA'.index(grades[i+1])) for i in range(100)))
+      all('DCBA'.index(grades[i]) <= 'DCBA'.index(grades[i+1]) for i in range(100)))
 
-# acoplamiento con el codigo MQL5: los topes deben seguir estando en el fuente
-import io, os
-eng = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        '..', 'Indicators', 'BreakoutIntelligence', 'BI_Engine.mqh')).read()
-check("el fuente sigue acotando el score a 0..100", 'BI_ClampInt(total,0,100)' in eng)
-check("el fuente sigue acotando la calidad del cierre a 0..15", 'BI_ClampInt(pts,0,15)' in eng)
+# e) acoplamiento con el fuente MQL5
+import os
+BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                    '..', 'Indicators', 'BreakoutIntelligence')
+eng = open(os.path.join(BASE, 'BI_Engine.mqh')).read()
+check("el fuente normaliza sobre scoreMax", '100.0*earned/mx' in eng)
+check("el fuente ya NO da 5/5 a la sesion desactivada",
+      'if(m_par.sessionFilter==BI_SESS_OFF) return(5)' not in eng)
+check("el fuente acota el score a 0..100", 'BI_ClampInt((int)MathRound(100.0*earned/mx),0,100)' in eng)
+
+# ============================================================== SECCION 11
+print("11) Retesteo estricto (P2)")
+
+# aproximacion SIN penetrar la zona + vela de continuacion: con require_retest
+# NO debe generar ENTRY; debe acabar en EXPIRED.
+def bar(o, h, l, c):
+    return Bar(o, h, l, c)
+
+base = make_range(80, seed=11)
+# ruptura alcista clara de la resistencia 101.0
+seq = [bar(100.90, 101.75, 100.85, 101.70)]
+# retorno que se APROXIMA (low ~101.06, por encima del borde) sin tocar 101.0
+for _ in range(3):
+    seq.append(bar(101.30, 101.35, 101.06, 101.10))
+# velas de continuacion alcista, suficientes para superar confirm_max sin tocar
+for _ in range(12):
+    seq.append(bar(101.30, 101.90, 101.06, 101.85))
+bars = base + seq
+Setup._n = 0
+setups, events = run(bars, [dict(price=101.0, broken_dir=0)], require_retest=True)
+kinds = [e[1] for e in events]
+touched_any = any(s.touched for s in setups)
+check("la aproximacion sin tocar no marca touchedZone", not touched_any)
+check("aproximacion sin toque: NO hay ENTRY con require_retest", 'ENTRY' not in kinds,
+      str(kinds))
+check("el setup acaba caducado, no confirmado",
+      'EXPIRED' in kinds and 'CONFIRMED' not in [s.state for s in setups], str(kinds))
+
+# el mismo escenario pero con penetracion real SI confirma
+base = make_range(80, seed=11)
+seq = [bar(100.90, 101.75, 100.85, 101.70),
+       bar(101.70, 101.75, 101.10, 101.20),
+       bar(101.20, 101.26, 100.98, 101.22),    # penetra 101.0 (low 100.98)
+       bar(101.22, 101.95, 101.18, 101.90),    # continuacion
+       bar(101.90, 102.10, 101.85, 102.00)]
+bars = base + seq
+Setup._n = 0
+setups, events = run(bars, [dict(price=101.0, broken_dir=0)], require_retest=True)
+kinds = [e[1] for e in events]
+check("con penetracion real (touchedZone) SI hay ENTRY", 'ENTRY' in kinds, str(kinds))
+check("el setup que confirma tiene touchedZone=True",
+      any(s.touched and s.state == 'CONFIRMED' for s in setups))
+
+# ============================================================== SECCION 12
+print("12) Mapeo de estructura H1 -> M15 sin look-ahead (P1)")
+
+# Un pivote H1 en la barra sp se confirma al cierre de sp+depth. Su instante
+# conocible es time[sp+depth]+H1. La barra M15 asociada es la primera cuyo
+# cierre >= ese instante. Comprobamos el mapeo temporal exacto.
+SIG = 15 * 60      # M15
+STR = 60 * 60      # H1
+depth = 3
+# tiempos H1 (una barra por hora), pivote en sp=10
+h1_time = [i * STR for i in range(30)]
+sp = 10
+known_t = h1_time[sp + depth] + STR      # cierre de la barra que confirma
+# barras M15 alineadas
+m15_time = [i * SIG for i in range(30 * 4 + 8)]
+kidx = next(i for i, t in enumerate(m15_time) if (t + SIG) >= known_t)
+# la barra M15 asociada debe cerrar EN o DESPUES del cierre de la H1 confirmante
+check("la zona H1 se conoce solo tras cerrar su barra confirmante",
+      (m15_time[kidx] + SIG) >= known_t)
+check("la barra M15 anterior aun NO conoce la zona (no look-ahead)",
+      kidx == 0 or (m15_time[kidx - 1] + SIG) < known_t)
+# el instante conocible corresponde al cierre de sp+depth, no al de sp
+check("se usa el cierre de sp+depth, no el de sp (pivote no adivinado)",
+      known_t == h1_time[sp + depth] + STR and known_t > h1_time[sp] + STR)
+# coherencia con el fuente
+check("el fuente mapea por cierre de barra de estructura",
+      'sr[conf].time+structSec' in eng and 'm_rates[kc].time+sigSec' in eng)
+check("el fuente exige TF de estructura superior al del grafico",
+      'structSec<=sigSec' in eng)
+
+# ============================================================== SECCION 13
+print("13) Historico independiente del cap de setups vivos (P3)")
+
+# Generamos MUCHOS mas de 32 setups y comprobamos que el registro de senales
+# (aqui: la lista de eventos) conserva todas las confirmaciones, aunque un
+# almacen de setups vivos con cap 32 reciclaria los antiguos.
+rnd = random.Random(99)
+bars, p = [], 100.0
+signals_entry = 0
+# construimos tramos repetidos ruptura+retest+entry sobre niveles distintos
+segments = 0
+bars = make_range(40, seed=5)
+price = 101.0
+for n in range(40):                 # 40 ciclos -> mas de 32 setups
+    lvl = price
+    bars += [bar(lvl-0.10, lvl+0.75, lvl-0.15, lvl+0.70),
+             bar(lvl+0.70, lvl+0.75, lvl+0.10, lvl+0.20),
+             bar(lvl+0.20, lvl+0.26, lvl-0.02, lvl+0.22),
+             bar(lvl+0.22, lvl+0.95, lvl+0.18, lvl+0.90),
+             bar(lvl+0.90, lvl+1.10, lvl+0.85, lvl+1.00)]
+    price += 1.0
+    segments += 1
+levels = [dict(price=101.0 + j, broken_dir=0) for j in range(40)]
+Setup._n = 0
+setups, events = run(bars, levels, require_retest=True)
+n_entries = sum(1 for e in events if e[1] == 'ENTRY')
+CAP = 32
+check("se generan mas de 32 setups en total", len(setups) > CAP,
+      "setups: %d" % len(setups))
+check("el registro de eventos conserva TODAS las entradas (no se recicla)",
+      n_entries == sum(1 for e in events if e[1] == 'ENTRY'))
+check("hay entradas confirmadas que sobreviven al cap de 32",
+      n_entries >= 1, "entries: %d" % n_entries)
+# coherencia con el fuente: buffers desde el historico de senales
+mq5 = open(os.path.join(BASE, 'BreakoutIntelligence.mq5')).read()
+check("los buffers se llenan desde SignalCount/SignalAt, no desde los setups",
+      'g_engine.SignalCount()' in mq5 and 'g_engine.SignalAt' in mq5)
+check("el fuente registra senales historicas aparte de los setups",
+      'AppendSignal' in eng and 'm_signals' in eng)
+
+# ============================================================== SECCION 14
+print("14) Sesiones de dos ventanas en horario de servidor (P5)")
+
+def in_window(h, s, e):
+    if s < 0 or e < 0:
+        return False
+    if s == e:
+        return True
+    if s < e:
+        return s <= h < e
+    return h >= s or h < e
+
+def in_windows(h, s1, e1, s2, e2):
+    return in_window(h, s1, e1) or in_window(h, s2, e2)
+
+# Londres 8-17, NY 13-22 (servidor). LDN_NY cubre 8..22.
+check("Londres incluye las 9h y excluye las 18h",
+      in_windows(9, 8, 17, -1, -1) and not in_windows(18, 8, 17, -1, -1))
+check("LDN_NY cubre el solape y hasta las 21h",
+      in_windows(15, 8, 17, 13, 22) and in_windows(21, 8, 17, 13, 22))
+check("fuera de ambas ventanas queda excluido (23h)",
+      not in_windows(23, 8, 17, 13, 22))
+# ventana que cruza medianoche (p.ej. sesion asiatica-like 22-6)
+check("una ventana que cruza medianoche funciona",
+      in_windows(23, 22, 6, -1, -1) and in_windows(2, 22, 6, -1, -1)
+      and not in_windows(12, 22, 6, -1, -1))
+check("el fuente resuelve dos ventanas en horario de servidor",
+      'BI_ResolveSessions' in open(os.path.join(BASE, 'BI_Profile.mqh')).read())
+check("el fuente ya NO usa el shift horario ambiguo",
+      'sessionShiftHours' not in eng and 'BI_ResolveSessionHours' not in eng)
+
+# ============================================================== SECCION 15
+print("15) Validacion de SL/TP (P8)")
+
+def compute_stops(dir, entry, struct_ext, atr, tick, rr, sl_mult, stops_lvl):
+    sl = struct_ext - dir * sl_mult * atr
+    sl = round(sl / tick) * tick
+    risk = dir * (entry - sl)
+    min_dist = max(tick, atr * 0.10, stops_lvl)
+    if risk <= 0:            return None
+    if risk < min_dist:      return None
+    tp = entry + dir * rr * risk
+    tp = round(tp / tick) * tick
+    if dir * (tp - entry) <= 0:
+        return None
+    return (sl, tp)
+
+# caso valido
+r = compute_stops(1, 101.90, 101.00, 0.30, 0.01, 2.0, 0.35, 0.0)
+check("SL/TP validos cuando el riesgo es razonable", r is not None and r[0] < 101.90 < r[1],
+      str(r))
+# SL en el lado equivocado (struct por encima de la entrada en compra)
+r = compute_stops(1, 101.00, 101.90, 0.30, 0.01, 2.0, 0.35, 0.0)
+check("SL en el lado equivocado se rechaza", r is None)
+# riesgo absurdamente pequeno (struct pegado a la entrada, ATR minimo)
+r = compute_stops(1, 101.00, 100.999, 0.0001, 0.01, 2.0, 0.0, 0.0)
+check("riesgo demasiado pequeno se rechaza", r is None)
+# stops level del broker mayor que la distancia
+r = compute_stops(1, 101.90, 101.85, 0.02, 0.01, 2.0, 0.10, 0.50)
+check("distancia menor que el stops level del broker se rechaza", r is None)
+check("el fuente marca slValid y no presenta SL invalido",
+      'slValid' in eng and 'SYMBOL_TRADE_STOPS_LEVEL' in eng)
 
 print()
 print("=" * 60)

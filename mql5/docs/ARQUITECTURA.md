@@ -147,6 +147,12 @@ RETESTEO  si   d·(ext − edge) <= tol_k
 Se marca `touchedZone = true` cuando `d·(ext − edge) <= 0`, es decir cuando el
 precio ha penetrado realmente la zona y no sólo se ha acercado.
 
+**Retesteo estricto (obligatorio con `InpRequireRetest = true`).** Para pasar a
+CONFIRMADO se exige `touchedZone == true`: una simple aproximación a la zona
+**no** confirma. Si el precio se aproxima (entra en estado RETESTEO) pero nunca
+penetra, el setup **caduca** en lugar de confirmar. El componente de puntuación
+de retesteo sólo cuenta si hubo un retesteo genuino.
+
 ### 3.6 Confirmación
 
 Con el setup en estado RETESTEO y `k > retestIdx`. Condición previa obligatoria:
@@ -156,7 +162,7 @@ Con el setup en estado RETESTEO y `k > retestIdx`. Condición previa obligatoria
 |---|---|
 | Continuación | `d·(close[k] − ref) > 0` y `d·(close[k] − edge) >= margin_k`, donde `ref` es el extremo del tramo `[retestIdx, k−1]` |
 | Envolvente | Vela direccional que envuelve a la anterior, de signo contrario, con cuerpo mayor |
-| Rechazo | Mecha del lado del nivel `>= pinWickRatio · (high−low)` y cierre en el 40 % favorable |
+| Rechazo | Mecha del lado del nivel `>= pinWickRatio · (high−low)` y cierre en el 40 % favorable. **No** se exige color de cuerpo: un martillo con cuerpo ligeramente contrario pero mecha dominante es válido |
 | Estructura | Extremo del retesteo mejor que el de la vela de ruptura **y** cierre superando el extremo de esa vela |
 
 No se exigen todos a la vez: eso haría que casi nunca hubiera señal.
@@ -187,11 +193,21 @@ roto para no repetir la misma señal.
 | Sesión | 5 | 5 dentro de la ventana configurada |
 | Volumen | 5 | 5 si `vol >= volumeMult · media`; 3 si ≥ media; 3 si el símbolo no da volumen útil |
 
+**Normalización (importante).** Cada componente aporta al numerador (puntos
+ganados) **y al denominador** (puntos máximos) **sólo si está activo**:
+
+- nivel y cierre cuentan siempre (núcleo estructural, 35 puntos);
+- EMA, ATR, sesión y volumen cuentan sólo si su filtro está activado y el dato es
+  utilizable (así **la sesión desactivada ya no otorga 5/5** ni infla el score);
+- retesteo cuenta sólo si hubo un retesteo genuino;
+- confirmación cuenta sólo una vez confirmado el setup.
+
+`score = redondeo(100 · ganados / máximo_activo)`. Con todos los filtros activos y
+el setup confirmado, el máximo es 100 (compatibilidad con la tabla anterior). En
+la ruptura, el máximo excluye retesteo y confirmación (aún no evaluados).
+
 Clasificación: **A** ≥ 80, **B** 65–79, **C** 50–64, **D** < 50. Sólo se alerta la
 entrada si el score alcanza `InpMinScoreAlert` (65 por defecto).
-
-En la ruptura se publica un **score parcial** (máx. 70): aún faltan los puntos de
-retesteo y confirmación.
 
 ---
 
@@ -204,10 +220,13 @@ retesteo y confirmación.
 3. Cada vela `k` decide con datos de velas `<= k` exclusivamente. Los detectores
    de pivote y de rango reciben `n = k+1` como límite superior, lo que hace
    imposible leer velas posteriores.
-4. Las series de timeframe superior (EMA de contexto, día previo, semana previa)
-   se alinean exigiendo que la vela superior esté **cerrada** antes del cierre de
-   la vela `k`. Durante el día en curso, el valor del «día anterior» es el del día
-   cerrado, no el del día que se está formando.
+4. Las series de timeframe superior (EMA de contexto, día previo, semana previa,
+   **y las zonas del TF de estructura**) se alinean exigiendo que la vela superior
+   esté **cerrada** antes del cierre de la vela `k`. Durante el día en curso, el
+   valor del «día anterior» es el del día cerrado, no el del día que se está
+   formando. Las zonas de H1 (`BuildStructureLevels`) sólo se inyectan en la vela
+   M15 cuya hora de cierre alcanza el cierre de la barra H1 que confirmó el pivote
+   o el rango.
 5. La reconstrucción es **determinista**: se recorre toda la ventana con las
    mismas reglas en cada vela nueva. Para que el borde vivo sea estable, el
    indicador amplía automáticamente la ventana procesada a
@@ -244,11 +263,14 @@ la última vela cerrada, que tampoco cambian.
 | Gráfico actual | Zonas, rangos, ruptura, retesteo y confirmación |
 | D1 / W1 | Máximo y mínimo del periodo anterior como niveles de referencia |
 
-El planteamiento H4 contexto / H1 zonas / M15 ejecución se obtiene abriendo el
-indicador en M15 con `InpContextTF = H4`. Las zonas de H1 aparecen igualmente en
-M15 porque los pivotes de H1 son pivotes de M15 con mayor profundidad; si se
-quiere el comportamiento estricto de H1, basta con abrir una segunda instancia en
-H1 para vigilar las zonas.
+El planteamiento **H4 contexto / H1 zonas / M15 ejecución** se implementa de
+forma explícita: se abre el indicador en **M15** con `InpContextTF = H4` y
+`InpStructureTF = H1` (valores por defecto). Cuando `InpStructureTF` es superior
+al timeframe del gráfico, las zonas (pivotes y rangos) se calculan sobre ese TF y
+se inyectan alineadas anti-look-ahead: una zona de H1 sólo influye en una vela
+M15 cuando su barra H1 ya está cerrada respecto al cierre de esa vela M15 (ver
+`BuildStructureLevels` en §4). Si `InpStructureTF` = timeframe del gráfico, las
+zonas se calculan sobre el propio gráfico (comportamiento de la v1.00).
 
 ---
 
@@ -273,17 +295,27 @@ Cada perfil ajusta márgenes, tolerancias y plazos. Extracto:
 Cualquier parámetro numérico puesto a `0` en los inputs toma el valor del perfil.
 Cualquier valor distinto de `0` **sobrescribe** el perfil.
 
+**Sesiones.** Las horas de Londres, Nueva York y personalizada se indican en
+**horario del servidor del broker** (`InpLondonStart/End`, `InpNewYorkStart/End`,
+`InpSessCustomStart/End`). No hay conversión a UTC ni ajuste automático de horario
+de verano: si el broker cambia de offset, el usuario ajusta las horas. El filtro
+`LDN_NY` evalúa dos ventanas simultáneas.
+
 ---
 
 ## 8. Limitaciones conocidas
 
 1. **No compilado por el autor del código.** Ver `PRUEBAS.md`.
-2. El volumen de Forex es volumen de ticks del broker, no volumen real de
-   mercado. Cuando el símbolo no entrega volumen útil, ese componente puntúa un
-   valor neutro (3/5) en vez de penalizar.
-3. Las horas de sesión son **horas del servidor del broker**. El valor por defecto
-   asume servidor en GMT+0; usa `InpSessionShiftHours` para ajustarlo. El
-   indicador no conoce el horario de verano de cada plaza.
+2. El volumen de Forex es **volumen de ticks** del broker, no volumen real de
+   mercado; el panel lo etiqueta como `TICK`. Cuando el símbolo no entrega
+   volumen útil, el componente de volumen **no se cuenta** en el score (ni suma
+   ni resta), en lugar de otorgar un valor neutro.
+3. Las horas de sesión son **horas del servidor del broker**, definidas
+   explícitamente por el usuario. El indicador **no** convierte a UTC ni gestiona
+   el horario de verano: si el broker cambia de offset (típico en primavera/otoño),
+   el usuario debe ajustar las horas. Se eligió esta vía frente a un ajuste
+   automático de DST porque el offset real depende del broker y no es fiable
+   deducirlo.
 4. No hay integración con calendario de noticias. MQL5 ofrece la API de
    calendario, pero requiere permisos y datos que no todos los brokers sirven;
    se ha dejado fuera de la versión 1.0 en lugar de entregar algo poco fiable.

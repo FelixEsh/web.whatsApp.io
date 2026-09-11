@@ -89,6 +89,7 @@ private:
    double            m_pdh[],m_pdl[],m_pwh[],m_pwl[];
    double            m_vol[],m_volMA[];
    bool              m_volUsable;
+   bool              m_volIsTick;      // true si se uso tick volume (no real)
 
    SBISetup          m_setups[];
    int               m_setupCount;
@@ -96,6 +97,24 @@ private:
 
    SBIEvent          m_events[];
    int               m_eventCount;
+
+   //--- historico de senales, independiente del cap de setups vivos (P3)
+   SBISignal         m_signals[];
+   int               m_signalCount;
+
+   //--- niveles precomputados del timeframe de estructura (P1)
+   double            m_slPrice[];
+   int               m_slKind[];
+   int               m_slKnownIdx[];
+   int               m_slCount;
+   int               m_slCursor;
+   //--- rangos del TF de estructura (solo para dibujar la caja)
+   double            m_srHi[];
+   double            m_srLo[];
+   int               m_srKnown[];
+   int               m_srBars[];
+   int               m_srCount;
+   int               m_srCursor;
 
    //--- estado incremental del recorrido
    double            m_lastPdh,m_lastPdl,m_lastPwh,m_lastPwl;
@@ -105,14 +124,14 @@ private:
    bool              m_asiaOpen;
    int               m_asiaKey;
    double            m_asiaHi,m_asiaLo;
-   int               m_sessStart,m_sessEnd;
+   int               m_s1Start,m_s1End,m_s2Start,m_s2End;
    string            m_lastError;
 
 public:
                      CBIEngine(void);
                     ~CBIEngine(void);
 
-   bool              Init(const SBIParams &p,const int sessionShiftHours);
+   bool              Init(const SBIParams &p);
    void              Deinit(void);
    bool              Rebuild(void);
 
@@ -132,7 +151,9 @@ public:
    double            Ema(const int k) const
      { return(k>=0 && k<m_n ? m_ema[k] : 0.0); }
    bool              VolumeUsable(void) const { return(m_volUsable); }
+   bool              VolumeIsTick(void) const { return(m_volIsTick); }
    int               TrendState(const int k) const;
+   bool              InSession(const int k) const;
 
    int               SetupCount(void) const { return(m_setupCount); }
    SBISetup          SetupAt(const int i) const { return(m_setups[i]); }
@@ -140,17 +161,20 @@ public:
    SBILevel          LevelAt(const int i) { return(m_levels.Items[i]); }
    int               EventCount(void) const { return(m_eventCount); }
    SBIEvent          EventAt(const int i) const { return(m_events[i]); }
+   int               SignalCount(void) const { return(m_signalCount); }
+   SBISignal         SignalAt(const int i) const { return(m_signals[i]); }
    bool              CurrentRange(double &hi,double &lo,int &bars,int &idx) const;
    int               LastActiveSetup(void) const;
-   int               SessionStart(void) const { return(m_sessStart); }
-   int               SessionEnd(void)   const { return(m_sessEnd); }
 
 private:
    bool              LoadData(void);
    bool              AlignContext(void);
    bool              AlignReference(const ENUM_TIMEFRAMES tf,double &outHi[],double &outLo[]);
+   bool              BuildStructureLevels(void);
    void              BuildVolume(void);
    void              ResetRun(void);
+   void              InjectStructureLevels(const int k);
+   void              AppendSignal(const int type,const SBISetup &s,const int k);
 
    void              ProcessBar(const int k);
    void              UpdatePivots(const int k);
@@ -196,13 +220,14 @@ CBIEngine::CBIEngine(void)
    m_digits=5; m_point=0.00001; m_tickSize=0.00001;
    m_hAtr=INVALID_HANDLE; m_hEma=INVALID_HANDLE;
    m_hRsi=INVALID_HANDLE; m_hCtxEma=INVALID_HANDLE;
-   m_volUsable=false;
+   m_volUsable=false; m_volIsTick=true;
    m_setupCount=0; m_nextSetupId=1; m_eventCount=0;
+   m_signalCount=0; m_slCount=0; m_slCursor=0; m_srCount=0; m_srCursor=0;
    m_lastPdh=0.0; m_lastPdl=0.0; m_lastPwh=0.0; m_lastPwl=0.0;
    m_lastRangeHi=0.0; m_lastRangeLo=0.0;
    m_rangeHi=0.0; m_rangeLo=0.0; m_rangeBars=0; m_rangeIdx=-1;
    m_asiaOpen=false; m_asiaKey=-1; m_asiaHi=0.0; m_asiaLo=0.0;
-   m_sessStart=0; m_sessEnd=0;
+   m_s1Start=-1; m_s1End=-1; m_s2Start=-1; m_s2End=-1;
    m_lastError="";
    ArraySetAsSeries(m_rates,false);
   }
@@ -218,7 +243,7 @@ CBIEngine::~CBIEngine(void)
 //+------------------------------------------------------------------+
 //| Creacion de handles y calculo del periodo de calentamiento       |
 //+------------------------------------------------------------------+
-bool CBIEngine::Init(const SBIParams &p,const int sessionShiftHours)
+bool CBIEngine::Init(const SBIParams &p)
   {
    Deinit();
    m_par=p;
@@ -229,8 +254,9 @@ bool CBIEngine::Init(const SBIParams &p,const int sessionShiftHours)
    if(m_point<=0.0)    m_point=MathPow(10.0,-m_digits);
    if(m_tickSize<=0.0) m_tickSize=m_point;
 
-   BI_ResolveSessionHours(m_par.sessionFilter,m_par.sessStartHour,m_par.sessEndHour,
-                          sessionShiftHours,m_sessStart,m_sessEnd);
+   //--- las horas de sesion ya vienen resueltas (horario de servidor)
+   m_s1Start=m_par.sess1Start; m_s1End=m_par.sess1End;
+   m_s2Start=m_par.sess2Start; m_s2End=m_par.sess2End;
 
    m_hAtr=iATR(m_par.symbol,m_par.tfSignal,m_par.atrPeriod);
    m_hEma=iMA(m_par.symbol,m_par.tfSignal,m_par.emaPeriod,0,MODE_EMA,PRICE_CLOSE);
@@ -253,6 +279,16 @@ bool CBIEngine::Init(const SBIParams &p,const int sessionShiftHours)
    m_warmup=w+20;
 
    return(true);
+  }
+
+//+------------------------------------------------------------------+
+//| Sesion favorable en la barra k (horario de servidor, 2 ventanas) |
+//+------------------------------------------------------------------+
+bool CBIEngine::InSession(const int k) const
+  {
+   if(m_par.sessionFilter==BI_SESS_OFF) return(true);
+   if(k<0 || k>=m_n) return(false);
+   return(BI_InWindows(m_rates[k].time,m_s1Start,m_s1End,m_s2Start,m_s2End));
   }
 
 //+------------------------------------------------------------------+
@@ -304,6 +340,14 @@ bool CBIEngine::LoadData(void)
    if(m_par.usePrevWeek) AlignReference(PERIOD_W1,m_pwh,m_pwl);
 
    BuildVolume();
+
+   //--- zonas del timeframe de estructura (P1). Si falla, se degrada a las
+   //    zonas del propio grafico en lugar de abortar el indicador.
+   m_slCount=0; m_slCursor=0; m_srCount=0; m_srCursor=0;
+   if(m_par.useStructTF && !BuildStructureLevels())
+     {
+      m_par.useStructTF=false;   // degradacion segura documentada en LastError
+     }
    return(true);
   }
 
@@ -400,6 +444,147 @@ bool CBIEngine::AlignReference(const ENUM_TIMEFRAMES tf,double &outHi[],double &
   }
 
 //+------------------------------------------------------------------+
+//| BuildStructureLevels (P1)                                        |
+//|                                                                  |
+//| Detecta pivotes y rangos en el TIMEFRAME DE ESTRUCTURA (p.ej.    |
+//| H1) y los traduce a "indice de barra del grafico en el que el    |
+//| nivel es CONOCIBLE", sin look-ahead:                             |
+//|                                                                  |
+//|  - Un pivote en la barra sp del TF de estructura se confirma al  |
+//|    cierre de la barra sp+depth de ese TF. Su instante conocible  |
+//|    es (time[sp+depth] + structSec).                              |
+//|  - Un rango que termina en la barra sk se conoce al cierre de sk |
+//|    es decir (time[sk] + structSec).                              |
+//|                                                                  |
+//| El indice del grafico asociado es la primera barra k cuyo cierre |
+//| (time[k]+sigSec) es >= ese instante conocible. Asi una zona de   |
+//| H1 solo influye en M15 cuando su barra H1 ya esta cerrada.       |
+//+------------------------------------------------------------------+
+bool CBIEngine::BuildStructureLevels(void)
+  {
+   const int sigSec   =PeriodSeconds(m_par.tfSignal);
+   const int structSec=PeriodSeconds(m_par.tfStructure);
+   if(sigSec<=0 || structSec<=0 || structSec<=sigSec)
+     {
+      m_lastError="TF de estructura debe ser superior al del grafico";
+      return(false);
+     }
+
+   int need=(int)MathCeil((double)m_n*sigSec/structSec)+m_par.rangeMaxBars+m_par.pivotDepth+50;
+   need=BI_ClampInt(need,64,20000);
+
+   MqlRates sr[];
+   ArraySetAsSeries(sr,false);
+   const int nS=CopyRates(m_par.symbol,m_par.tfStructure,0,need,sr);
+   if(nS<m_par.rangeMinBars+m_par.pivotDepth*2+5)
+     {
+      m_lastError="Datos del TF de estructura no disponibles todavia";
+      return(false);
+     }
+
+   //--- reserva generosa; se recorta al final
+   ArrayResize(m_slPrice,BI_MAX_STRUCT);
+   ArrayResize(m_slKind ,BI_MAX_STRUCT);
+   ArrayResize(m_slKnownIdx,BI_MAX_STRUCT);
+   ArrayResize(m_srHi,BI_MAX_STRUCT); ArrayResize(m_srLo,BI_MAX_STRUCT);
+   ArrayResize(m_srKnown,BI_MAX_STRUCT); ArrayResize(m_srBars,BI_MAX_STRUCT);
+   m_slCount=0; m_srCount=0;
+   const double sigRatio=(double)structSec/(double)sigSec;
+
+   //--- cursor de mapeo estructura -> grafico (ambos ascendentes en tiempo)
+   int kc=0;
+   double lastRHi=0.0,lastRLo=0.0;
+
+   for(int sp=m_par.pivotDepth; sp<nS-m_par.pivotDepth; sp++)
+     {
+      const int conf=sp+m_par.pivotDepth;          // barra que confirma el pivote
+      const datetime knownT=(datetime)(sr[conf].time+structSec);
+      while(kc<m_n && (datetime)(m_rates[kc].time+sigSec)<knownT) kc++;
+      if(kc>=m_n) break;                            // ya no hay barra de grafico
+      const int kIdx=kc;
+
+      //--- pivotes (n=conf+1 impide leer barras posteriores a conf)
+      if(BI_IsPivotHigh(sr,conf+1,sp,m_par.pivotDepth) && m_slCount<BI_MAX_STRUCT)
+        {
+         m_slPrice[m_slCount]=sr[sp].high; m_slKind[m_slCount]=BI_LK_SWING;
+         m_slKnownIdx[m_slCount]=kIdx; m_slCount++;
+        }
+      if(BI_IsPivotLow(sr,conf+1,sp,m_par.pivotDepth) && m_slCount<BI_MAX_STRUCT)
+        {
+         m_slPrice[m_slCount]=sr[sp].low; m_slKind[m_slCount]=BI_LK_SWING;
+         m_slKnownIdx[m_slCount]=kIdx; m_slCount++;
+        }
+
+      //--- rango del TF de estructura terminado en la barra "conf"
+      if(m_par.useRange)
+        {
+         double rhi=0.0,rlo=0.0; int rbars=0;
+         //--- ATR local del TF de estructura aproximado por la anchura media
+         const double atrS=(sr[conf].high-sr[conf].low);
+         if(atrS>0.0 &&
+            BI_DetectRange(sr,conf+1,conf,m_par.rangeMinBars,m_par.rangeMaxBars,
+                           atrS>0.0?atrS:m_point,m_par.rangeMaxWidthATR,m_par.rangeTouchATR,
+                           m_par.rangeMaxDrift,m_par.rangeMinTouchesSide,rhi,rlo,rbars))
+           {
+            const double tol=(rhi-rlo)*0.15+m_point;
+            if(MathAbs(rhi-lastRHi)>tol && m_slCount<BI_MAX_STRUCT)
+              { m_slPrice[m_slCount]=rhi; m_slKind[m_slCount]=BI_LK_RANGE;
+                m_slKnownIdx[m_slCount]=kIdx; m_slCount++; lastRHi=rhi; }
+            if(MathAbs(rlo-lastRLo)>tol && m_slCount<BI_MAX_STRUCT)
+              { m_slPrice[m_slCount]=rlo; m_slKind[m_slCount]=BI_LK_RANGE;
+                m_slKnownIdx[m_slCount]=kIdx; m_slCount++; lastRLo=rlo; }
+
+            //--- registro del rango para dibujar la caja (aprox. en barras M15)
+            if((MathAbs(rhi-lastRHi)>tol || MathAbs(rlo-lastRLo)>tol) &&
+               m_srCount<BI_MAX_STRUCT)
+              {
+               m_srHi[m_srCount]=rhi; m_srLo[m_srCount]=rlo;
+               m_srKnown[m_srCount]=kIdx;
+               m_srBars[m_srCount]=(int)MathRound(rbars*sigRatio);
+               m_srCount++;
+              }
+           }
+        }
+     }
+
+   ArrayResize(m_slPrice,m_slCount);
+   ArrayResize(m_slKind ,m_slCount);
+   ArrayResize(m_slKnownIdx,m_slCount);
+   ArrayResize(m_srHi,m_srCount); ArrayResize(m_srLo,m_srCount);
+   ArrayResize(m_srKnown,m_srCount); ArrayResize(m_srBars,m_srCount);
+   //--- ya vienen ordenados por knownIdx (sp y conf crecen monotonamente)
+   return(m_slCount>0);
+  }
+
+//+------------------------------------------------------------------+
+//| Inyecta en la barra k los niveles de estructura conocibles en k  |
+//+------------------------------------------------------------------+
+void CBIEngine::InjectStructureLevels(const int k)
+  {
+   const double tol=ClusterTol(k);
+   while(m_slCursor<m_slCount && m_slKnownIdx[m_slCursor]<=k)
+     {
+      const int idx=m_slCursor;
+      //--- barIdx retrasado para que el nivel ya cumpla la antiguedad minima:
+      //    una zona de H1 no es "nueva" cuando por fin la vemos en M15.
+      const int firstIdx=BI_MaxInt(0,k-m_par.minLevelAgeBars-1);
+      m_levels.AddOrMerge(m_slPrice[idx],m_slKind[idx],firstIdx,k,tol);
+      m_slCursor++;
+     }
+
+   //--- rango vigente para la caja de dibujo (ultimo rango de estructura visto)
+   while(m_srCursor<m_srCount && m_srKnown[m_srCursor]<=k)
+     {
+      m_rangeHi=m_srHi[m_srCursor];
+      m_rangeLo=m_srLo[m_srCursor];
+      m_rangeBars=m_srBars[m_srCursor];
+      m_rangeIdx=k;
+      m_srCursor++;
+     }
+  }
+
+
+//+------------------------------------------------------------------+
 //| Serie de volumen y su media movil                                |
 //+------------------------------------------------------------------+
 void CBIEngine::BuildVolume(void)
@@ -414,6 +599,7 @@ void CBIEngine::BuildVolume(void)
    for(int k=from;k<m_n;k++) realSum+=m_rates[k].real_volume;
 
    const bool useReal=(realSum>0);
+   m_volIsTick=!useReal;
    long tickSum=0;
    for(int k=0;k<m_n;k++)
      {
@@ -435,6 +621,9 @@ void CBIEngine::ResetRun(void)
    ArrayResize(m_setups,0);
    m_eventCount=0;
    ArrayResize(m_events,0);
+   m_signalCount=0;
+   ArrayResize(m_signals,0);
+   m_slCursor=0; m_srCursor=0;
    m_lastPdh=0.0; m_lastPdl=0.0; m_lastPwh=0.0; m_lastPwl=0.0;
    m_lastRangeHi=0.0; m_lastRangeLo=0.0;
    m_rangeHi=0.0; m_rangeLo=0.0; m_rangeBars=0; m_rangeIdx=-1;
@@ -466,9 +655,14 @@ void CBIEngine::ProcessBar(const int k)
 
    m_levels.SetMaxZoneWidth(m_par.clusterATR*2.0*m_atr[k]);
 
-   UpdatePivots(k);
+   if(m_par.useStructTF)
+      InjectStructureLevels(k);        // zonas del TF de estructura (P1)
+   else
+     {
+      UpdatePivots(k);                 // zonas del propio grafico
+      UpdateRangeLevels(k);
+     }
    UpdateReferenceLevels(k);
-   UpdateRangeLevels(k);
    UpdateSetups(k);
    DetectBreakouts(k);
    DetectWatch(k);
@@ -630,8 +824,7 @@ bool CBIEngine::HardFiltersPass(const int k,const int dir) const
      }
    if(m_par.sessionFilter!=BI_SESS_OFF && m_par.sessionHardFilter)
      {
-      if(!BI_InSession(m_rates[k].time,m_par.sessionFilter,m_sessStart,m_sessEnd))
-         return(false);
+      if(!InSession(k)) return(false);
      }
    return(true);
   }
@@ -797,11 +990,13 @@ int CBIEngine::NewSetup(const int li,const int k,const int dir)
    s.endIdx        = -1;
    s.confirmKind   = BI_CONF_NONE;
    s.touchedZone   = false;
+   s.retestReal    = false;
    s.breakClose    = m_rates[k].close;
    s.breakMargin   = margin;
    s.atrAtBreak    = m_atr[k];
    s.slPrice       = 0.0;
    s.tpPrice       = 0.0;
+   s.slValid       = false;
    s.scLevel       = ScoreLevelComp(m_levels.Items[li]);
    s.scClose       = ScoreCloseComp(k,edge,margin,dir);
    s.scTrend       = ScoreTrendComp(k,dir);
@@ -810,6 +1005,7 @@ int CBIEngine::NewSetup(const int li,const int k,const int dir)
    s.scVolume      = ScoreVolumeComp(k);
    s.scRetest      = 0;
    s.scConfirm     = 0;
+   s.scoreMax      = 0;
    s.score         = 0;
    RecalcScore(s);
 
@@ -890,6 +1086,7 @@ void CBIEngine::UpdateSetups(const int k)
             m_setups[i].retestIdx    =k;
             m_setups[i].retestDeepIdx=k;
             m_setups[i].retestExtreme=ext;
+            m_setups[i].retestReal   =true;
             m_setups[i].touchedZone  =((double)dir*(ext-edge)<=0.0);
             PushEvent(BI_EV_RETEST,m_setups[i],k);
             continue;
@@ -930,8 +1127,12 @@ void CBIEngine::UpdateSetups(const int k)
       if(!m_setups[i].touchedZone && (double)dir*(ext-edge)<=0.0)
          m_setups[i].touchedZone=true;
 
+      //--- P2: con requireRetest, el precio DEBE haber penetrado la zona
+      //    (touchedZone). Una simple aproximacion no puede confirmar.
+      const bool touchOk=(!m_par.requireRetest || m_setups[i].touchedZone);
+
       int ck=BI_CONF_NONE;
-      if(k>m_setups[i].retestIdx && IsConfirmation(k,m_setups[i],ck))
+      if(touchOk && k>m_setups[i].retestIdx && IsConfirmation(k,m_setups[i],ck))
         {
          m_setups[i].state      =BI_ST_CONFIRMED;
          m_setups[i].confirmIdx =k;
@@ -955,7 +1156,10 @@ void CBIEngine::UpdateSetups(const int k)
 //|  2 Envolvente   : cuerpo direccional que envuelve el de la vela  |
 //|                   anterior, de signo contrario                   |
 //|  3 Rechazo      : mecha del lado del nivel >= pinWickRatio del   |
-//|                   recorrido y cierre en el 40% favorable         |
+//|                   recorrido y cierre en el 40% favorable. NO se  |
+//|                   exige color de cuerpo: un martillo con cuerpo  |
+//|                   ligeramente contrario pero mecha inferior      |
+//|                   dominante es un rechazo alcista valido.        |
 //|  4 Estructura   : extremo del retesteo mejor que el de la vela   |
 //|                   de ruptura y cierre superando su extremo       |
 //| En todos los casos el cierre debe seguir del lado roto.          |
@@ -996,12 +1200,15 @@ bool CBIEngine::IsConfirmation(const int k,const SBISetup &s,int &confirmKind) c
       body>prevBody)
      { confirmKind=BI_CONF_ENGULFING; return(true); }
 
-   //--- 3) rechazo / pin bar
+   //--- 3) rechazo / pin bar (P7): mecha del lado del nivel + cierre
+   //    en el 40% favorable. El cierre ya esta del lado roto (garantizado
+   //    arriba). loc>=0.60 acota el cuerpo: aunque sea ligeramente
+   //    contrario, el cierre queda en la parte favorable de la vela.
    const double wick=(dir>0 ? MathMin(m_rates[k].open,m_rates[k].close)-m_rates[k].low
                             : m_rates[k].high-MathMax(m_rates[k].open,m_rates[k].close));
    const double loc =(dir>0 ? (m_rates[k].close-m_rates[k].low)/rng
                             : (m_rates[k].high-m_rates[k].close)/rng);
-   if(dirBody>0.0 && wick>=m_par.pinWickRatio*rng && loc>=0.60)
+   if(wick>=m_par.pinWickRatio*rng && loc>=0.60)
      { confirmKind=BI_CONF_REJECTION; return(true); }
 
    //--- 4) estructura
@@ -1025,6 +1232,9 @@ void CBIEngine::ComputeStops(SBISetup &s,const int k)
    const int    dir=s.dir;
    const double atr=m_atr[k];
 
+   s.slPrice=0.0; s.tpPrice=0.0; s.slValid=false;
+
+   //--- SL detras del extremo estructural del tramo, con colchon de ATR
    const int from=(s.retestIdx>=0 ? BI_MinInt(s.retestIdx,s.breakIdx) : s.breakIdx);
    double ext=(dir>0 ? m_rates[from].low : m_rates[from].high);
    for(int q=from;q<=k;q++)
@@ -1035,12 +1245,30 @@ void CBIEngine::ComputeStops(SBISetup &s,const int k)
    if(dir>0) { if(s.levelLo<ext) ext=s.levelLo; }
    else      { if(s.levelHi>ext) ext=s.levelHi; }
 
-   const double sl=ext-(double)dir*m_par.slAtrMult*atr;
+   double sl=ext-(double)dir*m_par.slAtrMult*atr;
    const double entry=m_rates[k].close;
-   const double risk=(double)dir*(entry-sl);
+
+   //--- redondeo al tick real del simbolo (no solo a los digitos)
+   sl=MathRound(sl/m_tickSize)*m_tickSize;
+   double risk=(double)dir*(entry-sl);
+
+   //--- distancia minima exigible: tick, colchon de ATR y stops level del broker
+   const double stopsLvl=(double)SymbolInfoInteger(m_par.symbol,SYMBOL_TRADE_STOPS_LEVEL)*m_point;
+   double minDist=MathMax(m_tickSize,atr*0.10);
+   if(stopsLvl>minDist) minDist=stopsLvl;
+
+   //--- P8: validaciones. Si algo no cuadra, no se presenta SL/TP.
+   if(risk<=0.0)          return;   // SL en el lado equivocado o sobre la entrada
+   if(risk<minDist)       return;   // absurdamente cercano
+   if((double)dir*(entry-sl)<=0.0) return;
+
+   double tp=entry+(double)dir*m_par.rrTarget*risk;
+   tp=MathRound(tp/m_tickSize)*m_tickSize;
+   if((double)dir*(tp-entry)<=0.0) return;   // TP en direccion incorrecta
 
    s.slPrice=NormalizeDouble(sl,m_digits);
-   s.tpPrice=(risk>0.0 ? NormalizeDouble(entry+(double)dir*m_par.rrTarget*risk,m_digits) : 0.0);
+   s.tpPrice=NormalizeDouble(tp,m_digits);
+   s.slValid=true;
   }
 
 //+------------------------------------------------------------------+
@@ -1071,7 +1299,6 @@ int CBIEngine::ScoreCloseComp(const int k,const double edge,const double margin,
 
 int CBIEngine::ScoreTrendComp(const int k,const int dir) const
   {
-   if(!m_par.useEmaFilter) return(8);
    const int t=TrendState(k);
    if(t==BI_TREND_UNKNOWN) return(5);
    if(t!=dir)              return(0);
@@ -1081,7 +1308,6 @@ int CBIEngine::ScoreTrendComp(const int k,const int dir) const
 
 int CBIEngine::ScoreVolaComp(const int k) const
   {
-   if(!m_par.useAtrFilter) return(6);
    const double r=AtrRatio(k);
    if(r<=0.0) return(3);
    if(r>=m_par.atrMinRatio && r<=m_par.atrMaxRatio) return(10);
@@ -1091,13 +1317,12 @@ int CBIEngine::ScoreVolaComp(const int k) const
 
 int CBIEngine::ScoreSessionComp(const int k) const
   {
-   if(m_par.sessionFilter==BI_SESS_OFF) return(5);
-   return(BI_InSession(m_rates[k].time,m_par.sessionFilter,m_sessStart,m_sessEnd) ? 5 : 0);
+   return(InSession(k) ? 5 : 0);
   }
 
 int CBIEngine::ScoreVolumeComp(const int k) const
   {
-   if(!m_par.useVolume || !m_volUsable || m_volMA[k]<=0.0) return(3);
+   if(m_volMA[k]<=0.0) return(0);
    const double r=m_vol[k]/m_volMA[k];
    if(r>=m_par.volumeMult) return(5);
    if(r>=1.0)              return(3);
@@ -1106,7 +1331,6 @@ int CBIEngine::ScoreVolumeComp(const int k) const
 
 int CBIEngine::ScoreRetestComp(const SBISetup &s) const
   {
-   if(s.retestIdx<0) return(m_par.requireRetest ? 0 : 10);
    return(s.touchedZone ? 20 : 14);
   }
 
@@ -1123,15 +1347,43 @@ int CBIEngine::ScoreConfirmComp(const int confirmKind) const
   }
 
 //+------------------------------------------------------------------+
-//| Suma de componentes (0-100). NO es una probabilidad.             |
+//| Puntuacion NORMALIZADA sobre las condiciones realmente evaluadas |
+//| (P4). NO es una probabilidad.                                    |
+//|                                                                  |
+//| Cada componente aporta al numerador (puntos ganados) y al        |
+//| denominador (puntos maximos) SOLO si esta activo:                |
+//|   - nivel y cierre: siempre (nucleo estructural);                |
+//|   - EMA, ATR, sesion, volumen: solo si su filtro esta activo y   |
+//|     el dato es utilizable (asi la sesion OFF ya no da 5/5);      |
+//|   - retesteo: solo si hubo un retesteo genuino;                  |
+//|   - confirmacion: solo una vez confirmado el setup.              |
+//| score = redondeo(100 * ganados / maximos). Con todos los filtros |
+//| activos y setup confirmado, el maximo es 100 (compatibilidad).   |
 //+------------------------------------------------------------------+
 void CBIEngine::RecalcScore(SBISetup &s) const
   {
-   s.scRetest =ScoreRetestComp(s);
-   s.scConfirm=ScoreConfirmComp(s.confirmKind);
-   const int total=s.scLevel+s.scClose+s.scTrend+s.scVola+
-                   s.scRetest+s.scConfirm+s.scSession+s.scVolume;
-   s.score=BI_ClampInt(total,0,100);
+   int earned=0, mx=0;
+
+   earned+=s.scLevel; mx+=20;                     // nivel   (nucleo)
+   earned+=s.scClose; mx+=15;                     // cierre  (nucleo)
+
+   if(m_par.useEmaFilter)                    { earned+=s.scTrend;   mx+=15; }
+   if(m_par.useAtrFilter)                    { earned+=s.scVola;    mx+=10; }
+   if(m_par.sessionFilter!=BI_SESS_OFF)      { earned+=s.scSession; mx+=5;  }
+   if(m_par.useVolume && m_volUsable)        { earned+=s.scVolume;  mx+=5;  }
+
+   if(s.retestReal)
+     { s.scRetest=ScoreRetestComp(s); earned+=s.scRetest; mx+=20; }
+   else
+      s.scRetest=0;
+
+   if(s.state==BI_ST_CONFIRMED)
+     { s.scConfirm=ScoreConfirmComp(s.confirmKind); earned+=s.scConfirm; mx+=10; }
+   else
+      s.scConfirm=0;
+
+   s.scoreMax=mx;
+   s.score=(mx>0 ? BI_ClampInt((int)MathRound(100.0*earned/mx),0,100) : 0);
   }
 
 //+------------------------------------------------------------------+
@@ -1168,6 +1420,37 @@ void CBIEngine::PushEvent(const int type,const SBISetup &s,const int k)
    e.confirmKind=s.confirmKind;
    e.state      =s.state;
    AppendEvent(e);
+
+   //--- P3: registro historico persistente (independiente del cap de setups)
+   if(type==BI_EV_BREAKOUT || type==BI_EV_RETEST || type==BI_EV_ENTRY)
+      AppendSignal(type,s,k);
+  }
+
+//+------------------------------------------------------------------+
+//| Historico de senales (P3). No se recicla con los setups vivos:   |
+//| conserva toda la secuencia BREAKOUT/RETEST/ENTRY de la ventana   |
+//| procesada para poder dibujarla y estudiarla.                     |
+//+------------------------------------------------------------------+
+void CBIEngine::AppendSignal(const int type,const SBISetup &s,const int k)
+  {
+   //--- cota de seguridad: no puede haber mas senales que barras
+   if(m_signalCount>=m_n) return;
+   if(ArrayResize(m_signals,m_signalCount+1)!=m_signalCount+1) return;
+
+   SBISignal g;
+   g.type       =type;
+   g.dir        =s.dir;
+   g.barIdx     =k;
+   g.barTime    =m_rates[k].time;
+   g.level      =s.levelEdge;
+   g.sl         =s.slPrice;
+   g.tp         =s.tpPrice;
+   g.slValid    =s.slValid;
+   g.score      =s.score;
+   g.confirmKind=s.confirmKind;
+   g.setupId    =s.id;
+   m_signals[m_signalCount]=g;
+   m_signalCount++;
   }
 
 void CBIEngine::PushLevelEvent(const int type,const int k,const int dir,
@@ -1223,9 +1506,11 @@ void CBIEngine::DetectWatch(const int k)
 bool CBIEngine::CurrentRange(double &hi,double &lo,int &bars,int &idx) const
   {
    hi=m_rangeHi; lo=m_rangeLo; bars=m_rangeBars; idx=m_rangeIdx;
-   //--- solo se considera vigente si se ha detectado en la ultima vela cerrada
    if(m_rangeIdx<0 || m_rangeHi<=m_rangeLo) return(false);
-   return((m_n-2-m_rangeIdx)<=1);
+   //--- en modo estructura un rango H1 permanece vigente mas de una vela M15;
+   //    en modo grafico solo si se detecto en la ultima vela cerrada.
+   const int maxAge=(m_par.useStructTF ? m_par.lookbackBars : 1);
+   return((m_n-2-m_rangeIdx)<=maxAge);
   }
 
 int CBIEngine::LastActiveSetup(void) const
