@@ -9,21 +9,41 @@ bueno.
 
 Lo que **sí** se ha comprobado de forma automática:
 
-| Comprobación | Herramienta | Resultado |
-|---|---|---|
-| Equilibrio de llaves, paréntesis y corchetes | `tools/mql5_lint.py` | 0 errores |
-| Toda función invocada existe en MQL5 o en el proyecto (detecta APIs inventadas) | `tools/mql5_lint.py` | 0 errores |
-| Toda constante usada existe | `tools/mql5_lint.py` | 0 errores |
-| Métodos declarados ↔ métodos definidos en las 4 clases | `tools/mql5_lint.py` | 0 errores |
-| Campos de estructura inexistentes | `tools/mql5_lint.py` | 0 errores |
-| `indicator_buffers` ↔ número de `SetIndexBuffer` ↔ `indicator_plots` | `tools/mql5_lint.py` | 0 errores |
-| Detector de rango acepta consolidaciones y rechaza tendencias | `tools/logic_model_test.py` | OK |
-| Secuencia ruptura → retesteo → confirmación | `tools/logic_model_test.py` | OK |
-| Falso breakout se invalida y devuelve el nivel al estado operativo | `tools/logic_model_test.py` | OK |
-| Ruptura sin retesteo caduca | `tools/logic_model_test.py` | OK |
-| Ningún setup emite dos veces el mismo evento (200 series aleatorias) | `tools/logic_model_test.py` | OK |
-| Todo setup empieza por RUPTURA y los eventos van en orden temporal | `tools/logic_model_test.py` | OK |
-| El histórico truncado reproduce el completo (ausencia de look-ahead) | `tools/logic_model_test.py` | OK |
+### Verificación estática — `tools/mql5_lint.py` (0 errores)
+
+| # | Comprobación |
+|---|---|
+| 1 | Equilibrio de llaves, paréntesis y corchetes |
+| 2 | Toda función invocada existe en MQL5 o en el proyecto (detecta **APIs inventadas**) |
+| 3 | Toda constante usada existe |
+| 4 | Métodos declarados ↔ métodos definidos en las 4 clases |
+| 5 | Campos de estructura inexistentes |
+| 6 | `indicator_buffers` ↔ nº de `SetIndexBuffer` ↔ `indicator_plots` |
+| 7 | `const` y parámetros coinciden entre declaración y definición (un desajuste **es** error de compilación en MQL5) |
+| 8 | Ninguna función con valor de retorno puede terminar sin `return` |
+| 9 | `MathMax`/`MathMin` (devuelven `double`) no alimentan un `int` |
+| 10 | Toda estructura local usada como «constructor» rellena **todos** sus campos (un campo olvidado no es error de compilación: es basura en ejecución) |
+
+El verificador se ha sometido a una **prueba negativa**: se inyectaron cinco
+fallos en una copia del proyecto (una API inexistente, un desajuste de `const`,
+una función sin `return`, un `MathMax` asignado a `int` y un campo de estructura
+sin inicializar) y los detectó los cinco. Un verificador que nunca salta no
+sirve de nada.
+
+### Pruebas de lógica — `tools/logic_model_test.py` (31 comprobaciones, 0 fallos)
+
+| Bloque | Qué comprueba |
+|---|---|
+| 1 · Rango | Acepta consolidaciones, rechaza tendencias limpias |
+| 2 · Ciclo completo | Secuencia ruptura → retesteo → confirmación, un solo setup |
+| 3 · Falso breakout | Se invalida y devuelve el nivel al estado operativo |
+| 4 · Caducidad | Ruptura sin retesteo caduca |
+| 5 · Invariantes | 200 series aleatorias: 0 eventos duplicados, todo setup empieza por RUPTURA, eventos en orden temporal, el motor genera señales |
+| 6 · Look-ahead | El histórico truncado reproduce exactamente el completo |
+| 7 · Pivotes | Máximo/mínimo aislado, una meseta da **un** pivote, el pivote solo es conocible desde `p+D` |
+| 8 · Niveles | Fusiona dentro de tolerancia, no fusiona lejos, acumula toques, respeta el tope de anchura de zona, un nivel roto no absorbe toques |
+| 9 · Reactivación | Tras invalidar, el mismo nivel puede volver a romperse; tras caducar, **no** |
+| 10 · Puntuación | Los máximos suman exactamente 100, el parcial de ruptura tope 70, clasificación A/B/C/D sin huecos, y los topes siguen presentes en el fuente MQL5 |
 
 Ejecución:
 

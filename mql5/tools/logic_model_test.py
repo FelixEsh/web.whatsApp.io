@@ -317,6 +317,188 @@ for cut in range(len(bars) - 8, len(bars) + 1):
         stable = False
 check("el historico truncado reproduce el completo", stable)
 
+# ============================================================== SECCION 7
+print("7) Deteccion de pivotes (BI_IsPivotHigh / BI_IsPivotLow)")
+
+def is_pivot_high(bars, n, p, depth):
+    if p - depth < 0 or p + depth >= n:
+        return False
+    v = bars[p].h
+    for i in range(1, depth + 1):
+        if bars[p-i].h > v:
+            return False
+        if bars[p+i].h >= v:
+            return False
+    return True
+
+def is_pivot_low(bars, n, p, depth):
+    if p - depth < 0 or p + depth >= n:
+        return False
+    v = bars[p].l
+    for i in range(1, depth + 1):
+        if bars[p-i].l < v:
+            return False
+        if bars[p+i].l <= v:
+            return False
+    return True
+
+# maximo aislado en el indice 5
+hs = [10, 11, 12, 13, 14, 20, 14, 13, 12, 11, 10]
+bs = [bar(h, h, h - 1, h) for h in hs]
+check("detecta un maximo aislado", is_pivot_high(bs, len(bs), 5, 3))
+check("no marca vecinos como pivote",
+      not any(is_pivot_high(bs, len(bs), p, 3) for p in (4, 6)))
+
+# meseta de tres maximos iguales: solo debe sobrevivir el de mas a la derecha
+hs = [10, 11, 12, 20, 20, 20, 12, 11, 10, 9, 8]
+bs = [bar(h, h, h - 1, h) for h in hs]
+piv = [p for p in range(len(bs)) if is_pivot_high(bs, len(bs), p, 3)]
+check("una meseta produce un unico pivote", piv == [5], str(piv))
+
+# un pivote en p NO puede detectarse antes de la vela p+depth
+hs = [10, 11, 12, 13, 14, 20, 14, 13, 12, 11, 10]
+bs = [bar(h, h, h - 1, h) for h in hs]
+D = 3
+visible = [k for k in range(len(bs)) if is_pivot_high(bs, k + 1, 5, D)]
+check("el pivote solo es conocible desde p+D",
+      visible and min(visible) == 5 + D, "primera vela que lo ve: %s" % (min(visible) if visible else None))
+
+# simetria: minimo aislado
+ls = [20, 19, 18, 17, 16, 10, 16, 17, 18, 19, 20]
+bs = [bar(l + 1, l + 1, l, l) for l in ls]
+check("detecta un minimo aislado", is_pivot_low(bs, len(bs), 5, 3))
+
+# ============================================================== SECCION 8
+print("8) Agrupacion de niveles (CBILevels::AddOrMerge)")
+
+class Levels:
+    def __init__(self, max_zone=0.0):
+        self.items, self._id, self.max_zone = [], 0, max_zone
+
+    def add_or_merge(self, price, kind, bar_idx, known_idx, tol):
+        best, best_d = None, float('inf')
+        for lv in self.items:
+            if not lv['active'] or lv['broken_dir'] != 0:
+                continue
+            if price > lv['hi'] + tol or price < lv['lo'] - tol:
+                continue
+            nhi, nlo = max(lv['hi'], price), min(lv['lo'], price)
+            if self.max_zone > 0 and (nhi - nlo) > self.max_zone:
+                continue
+            d = abs(price - lv['price'])
+            if d < best_d:
+                best_d, best = d, lv
+        if best is not None:
+            best['hi'] = max(best['hi'], price)
+            best['lo'] = min(best['lo'], price)
+            best['price'] = (best['hi'] + best['lo']) / 2
+            best['touches'] += 1
+            best['last_idx'] = bar_idx
+            return best['id']
+        self._id += 1
+        self.items.append(dict(id=self._id, kind=kind, price=price, hi=price, lo=price,
+                               touches=1, first_idx=bar_idx, known_idx=known_idx,
+                               last_idx=bar_idx, broken_dir=0, active=True))
+        return self._id
+
+L = Levels(max_zone=0.30)
+a = L.add_or_merge(100.00, 'SWING', 10, 10, 0.10)
+b = L.add_or_merge(100.05, 'SWING', 20, 20, 0.10)      # dentro de tolerancia
+c = L.add_or_merge(100.90, 'SWING', 30, 30, 0.10)      # lejos
+check("fusiona precios dentro de la tolerancia", a == b, "ids %s / %s" % (a, b))
+check("no fusiona precios lejanos", c != a)
+check("la fusion acumula toques", L.items[0]['touches'] == 2)
+check("la zona se ensancha al fusionar",
+      abs(L.items[0]['hi'] - 100.05) < 1e-9 and abs(L.items[0]['lo'] - 100.00) < 1e-9)
+
+# el tope de anchura de zona impide fusiones encadenadas sin fin
+L2 = Levels(max_zone=0.30)
+ids = [L2.add_or_merge(100.0 + i * 0.09, 'SWING', i, i, 0.10) for i in range(8)]
+widths = [lv['hi'] - lv['lo'] for lv in L2.items]
+check("ninguna zona supera la anchura maxima", all(w <= 0.30 + 1e-9 for w in widths),
+      "anchuras: %s" % [round(w, 3) for w in widths])
+check("el tope obliga a crear niveles nuevos", len(set(ids)) > 1, "niveles: %d" % len(L2.items))
+
+# un nivel roto no absorbe toques nuevos
+L3 = Levels(max_zone=0.30)
+i1 = L3.add_or_merge(100.0, 'SWING', 10, 10, 0.10)
+L3.items[0]['broken_dir'] = 1
+i2 = L3.add_or_merge(100.02, 'SWING', 20, 20, 0.10)
+check("un nivel roto no absorbe toques", i1 != i2)
+
+# ============================================================== SECCION 9
+print("9) Reactivacion del nivel tras una invalidacion")
+
+bars = make_range(80, seed=3)
+bars += [bar(100.90, 101.75, 100.85, 101.70),   # ruptura 1
+         bar(101.70, 101.72, 100.70, 100.75),   # falso: cierra dentro -> invalidado
+         bar(100.75, 100.95, 100.60, 100.80),
+         bar(100.80, 100.95, 100.70, 100.85),
+         bar(100.85, 100.95, 100.75, 100.90),
+         bar(100.90, 101.80, 100.88, 101.75),   # ruptura 2 sobre el mismo nivel
+         bar(101.75, 101.80, 101.15, 101.25),   # retesteo
+         bar(101.25, 101.95, 101.20, 101.90),   # confirmacion
+         bar(101.90, 102.10, 101.85, 102.00)]   # vela en formacion (no se evalua)
+Setup._n = 0
+lv = [dict(price=101.0, broken_dir=0)]
+setups, events = run(bars, lv)
+kinds = [e[1] for e in events]
+check("tras invalidar, el mismo nivel puede volver a romperse",
+      kinds.count('BREAKOUT') == 2, str(kinds))
+check("las dos rupturas son setups distintos", len(setups) == 2, str(len(setups)))
+check("la segunda llega a confirmarse", 'ENTRY' in kinds, str(kinds))
+
+# en cambio, una ruptura CADUCADA no debe re-senalar el mismo nivel
+bars = make_range(80, seed=4)
+bars += [bar(100.90, 101.75, 100.85, 101.70)]
+p = 101.70
+for _ in range(20):
+    p += 0.30
+    bars.append(bar(p - 0.25, p + 0.05, p - 0.30, p))
+Setup._n = 0
+lv = [dict(price=101.0, broken_dir=0)]
+setups, events = run(bars, lv)
+kinds = [e[1] for e in events]
+check("una ruptura caducada no vuelve a senalar el nivel",
+      kinds.count('BREAKOUT') == 1 and 'EXPIRED' in kinds, str(kinds))
+
+# ============================================================== SECCION 10
+print("10) Limites de la puntuacion")
+
+COMP = {                       # (nombre, valores posibles) segun BI_Engine.mqh
+    'scLevel':   [0, 8, 14, 17, 19, 18, 20],
+    'scClose':   list(range(0, 16)),
+    'scTrend':   [0, 5, 8, 10, 15],
+    'scVola':    [0, 3, 5, 6, 10],
+    'scRetest':  [0, 10, 14, 20],
+    'scConfirm': [0, 7, 8, 10],
+    'scSession': [0, 5],
+    'scVolume':  [0, 3, 5],
+}
+maxima = {k: max(v) for k, v in COMP.items()}
+check("los maximos de los componentes suman exactamente 100",
+      sum(maxima.values()) == 100, str(maxima) + " = %d" % sum(maxima.values()))
+check("ninguna combinacion puede superar 100", sum(maxima.values()) <= 100)
+partial = maxima['scLevel'] + maxima['scClose'] + maxima['scTrend'] + \
+          maxima['scVola'] + maxima['scSession'] + maxima['scVolume']
+check("el score parcial de la ruptura no llega al umbral A (80)", partial == 70,
+      "maximo parcial: %d" % partial)
+
+# los umbrales de clasificacion no deben solaparse ni dejar huecos
+def grade(s):
+    return 'A' if s >= 80 else 'B' if s >= 65 else 'C' if s >= 50 else 'D'
+grades = [grade(s) for s in range(0, 101)]
+check("la clasificacion cubre 0..100 sin huecos", set(grades) == {'A', 'B', 'C', 'D'})
+check("los umbrales son monotonos",
+      all(('DCBA'.index(grades[i]) <= 'DCBA'.index(grades[i+1])) for i in range(100)))
+
+# acoplamiento con el codigo MQL5: los topes deben seguir estando en el fuente
+import io, os
+eng = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        '..', 'Include', 'BreakoutIntelligence', 'BI_Engine.mqh')).read()
+check("el fuente sigue acotando el score a 0..100", 'BI_ClampInt(total,0,100)' in eng)
+check("el fuente sigue acotando la calidad del cierre a 0..15", 'BI_ClampInt(pts,0,15)' in eng)
+
 print()
 print("=" * 60)
 print("FALLOS: %d" % len(FAIL) + ("" if not FAIL else "  -> " + ", ".join(FAIL)))

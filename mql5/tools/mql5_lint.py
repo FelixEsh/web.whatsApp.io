@@ -10,6 +10,13 @@ NO es un compilador MQL5. Comprueba unicamente:
   4. Correspondencia entre metodos declarados en cada clase y sus definiciones.
   5. Que los campos accedidos con '.' existan en alguna estructura del proyecto.
   6. Coherencia entre indicator_buffers / indicator_plots y SetIndexBuffer.
+  7. Que 'const' y los parametros coincidan entre declaracion y definicion
+     de cada metodo (un desajuste es error de compilacion en MQL5).
+  8. Que ninguna funcion con valor de retorno pueda terminar sin return.
+  9. Que MathMax/MathMin (que devuelven double) no alimenten un entero.
+ 10. Que toda estructura local usada como 'constructor' rellene todos sus
+     campos (un campo olvidado no es error de compilacion: es basura en
+     tiempo de ejecucion).
 """
 import re, sys, os, glob
 
@@ -248,6 +255,88 @@ def main():
         for i in range(1, (int(np_.group(1)) + 1) if np_ else 1):
             if not re.search(r'indicator_type%d\b' % i, src):
                 errs.append(f"{os.path.basename(f)}: falta indicator_type{i}")
+
+    # --- 7) firmas: const y parametros deben coincidir declaracion/definicion
+    RETT = (r'(?:void|int|double|bool|string|long|color|datetime|'
+            r'SBILevel|SBISetup|SBIEvent|SBIProfileDefaults)')
+    for cls in ['CBIEngine', 'CBILevels', 'CBIAlerts', 'CBIRender']:
+        mm = re.search(r'class\s+' + cls + r'\b(.*?)\n\s*\};', all_code, re.S)
+        if not mm:
+            continue
+        flat = re.sub(r'\s+', ' ', mm.group(1))
+        decl = {}
+        for stmt in flat.split(';'):
+            g = re.search(r'(?:^| )' + RETT + r'\s+(\w+)\s*\(([^()]*)\)\s*(const)?\s*$',
+                          stmt.strip() + ' ')
+            if g:
+                decl[g.group(1)] = (bool(g.group(3)), re.sub(r'\s+', '', g.group(2)))
+        for g in re.finditer(cls + r'::(\w+)\s*\(([^()]*)\)\s*(const)?\s*\n?\s*\{', all_code):
+            name, args, isc = g.group(1), re.sub(r'\s+', '', g.group(2)), bool(g.group(3))
+            if name in (cls, '~' + cls) or name not in decl:
+                continue
+            dc, da = decl[name]
+            if dc != isc:
+                errs.append(f"{cls}::{name}: 'const' no coincide "
+                            f"(declaracion={dc}, definicion={isc})")
+            if da != args:
+                errs.append(f"{cls}::{name}: parametros distintos\n"
+                            f"       decl: {da}\n       def : {args}")
+
+    # --- 8) toda funcion con valor de retorno debe terminar en return
+    #        (void queda excluido: no devuelve nada)
+    RETV = (r'(?:int|double|bool|string|long|color|datetime|'
+            r'SBILevel|SBISetup|SBIEvent|SBIProfileDefaults)')
+    for f in files:
+        code = codes[f]
+        for m in re.finditer(r'^' + RETV + r'\s+(?:\w+::)?(\w+)\s*\([^;{]*\)\s*'
+                             r'(?:const\s*)?\n?\s*\{', code, re.M):
+            i, depth = m.end() - 1, 0
+            while i < len(code):
+                if code[i] == '{':
+                    depth += 1
+                elif code[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            body = code[m.end():i]
+            # la ULTIMA sentencia del cuerpo debe ser un return; que exista un
+            # return en algun 'case' interior no garantiza todas las rutas
+            frag = [x.strip() for x in
+                    body.replace('}', ' ').replace('{', ' ').split(';') if x.strip()]
+            if not frag or not frag[-1].startswith('return'):
+                ln = code[:m.start()].count('\n') + 1
+                errs.append(f"{os.path.basename(f)}:{ln}: {m.group(1)}() "
+                            f"puede terminar sin return")
+
+    # --- 9) MathMax/MathMin devuelven double: no deben alimentar un entero
+    for f in files:
+        for m in re.finditer(r'\bint\s+\w+\s*=[^;]*Math(?:Max|Min)\s*\(', codes[f]):
+            ln = codes[f][:m.start()].count('\n') + 1
+            errs.append(f"{os.path.basename(f)}:{ln}: MathMax/MathMin (double) "
+                        f"asignado a int; usa BI_MaxInt/BI_MinInt")
+
+    # --- 10) estructuras locales usadas como constructor: todos los campos asignados
+    struct_def = {}
+    for mm in re.finditer(r'struct\s+(\w+)\s*\{(.*?)\n\s*\};', all_code, re.S):
+        struct_def[mm.group(1)] = [g.group(1) for g in
+                                   re.finditer(r'^\s*\w+\s+(\w+)\s*;', mm.group(2), re.M)]
+    for f in files:
+        code = codes[f]
+        for st, fields in struct_def.items():
+            for m in re.finditer(r'\b' + st + r'\s+(\w+)\s*;', code):
+                var = m.group(1)
+                # la ventana llega hasta el final de la funcion que lo declara
+                end = code.find('\n  }', m.end())
+                tail = code[m.end():end if end > 0 else len(code)]
+                assigned = set(re.findall(r'\b' + var + r'\.(\w+)\s*=', tail))
+                if len(assigned) < 3:
+                    continue                       # no es un relleno de estructura
+                missing = [x for x in fields if x not in assigned]
+                if missing:
+                    ln = code[:m.start()].count('\n') + 1
+                    errs.append(f"{os.path.basename(f)}:{ln}: {st} {var} deja sin "
+                                f"inicializar {missing}")
 
     print("Ficheros analizados: %d" % len(files))
     for w in warns:
