@@ -30,7 +30,7 @@ una función sin `return`, un `MathMax` asignado a `int` y un campo de estructur
 sin inicializar) y los detectó los cinco. Un verificador que nunca salta no
 sirve de nada.
 
-### Pruebas de lógica — `tools/logic_model_test.py` (64 comprobaciones, 0 fallos)
+### Pruebas de lógica — `tools/logic_model_test.py` (88 comprobaciones, 0 fallos)
 
 | Bloque | Qué comprueba |
 |---|---|
@@ -49,6 +49,11 @@ sirve de nada.
 | 13 · Histórico | >32 setups: todas las entradas se conservan; buffers desde el histórico de señales |
 | 14 · Sesiones | Dos ventanas en horario de servidor, solape LDN_NY, cruce de medianoche; sin shift |
 | 15 · SL/TP | Rechaza lado equivocado, riesgo mínimo y distancia < stops level del broker |
+| 16 · ATR H1 (Bug 1) | ATR(14) real del TF de estructura, causal; ≠ anchura de una vela |
+| 17 · Registro de rango (Bug 2) | `newRange` se decide antes de actualizar `lastRHi/lastRLo` |
+| 18 · Capacidad (Bug 3) | Dimensionada por histórico; conserva los niveles recientes |
+| 19 · Antigüedad (Bug 4) | Elegibilidad en `knownIdx + minLevelAgeBars`, sin `firstIdx` fabricado |
+| 20 · Límite de setups (Bug 5) | La ocupación de setups vivos nunca supera `maxActiveSetups` |
 
 Ejecución:
 

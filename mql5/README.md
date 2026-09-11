@@ -1,4 +1,4 @@
-# Breakout Intelligence MT5 v1.10
+# Breakout Intelligence MT5 v1.11
 
 Indicador de MetaTrader 5 para detectar rupturas de rangos y niveles relevantes,
 filtrar las rupturas débiles y avisar cuando aparece una configuración que cumple

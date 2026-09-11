@@ -1,5 +1,79 @@
 # Changelog — Breakout Intelligence MT5
 
+## v1.11 — Correcciones de la 2.ª revisión (5 bugs del motor de estructura)
+
+Segunda ronda de revisión externa. Se corrigen **exactamente** los cinco bugs
+señalados, sin tocar lo que ya funcionaba, con una prueba nueva por cada uno.
+El código **sigue sin compilar en MetaEditor** (entorno sin él): lo verificado es
+estático y lógico; falta compilación y validación en MT5 real.
+
+### Bug 1 — ATR(14) real del TF de estructura  🔴
+`BuildStructureLevels()` usaba `sr[conf].high - sr[conf].low` (la anchura de una
+sola vela H1) como si fuera el ATR del H1, descalibrando la detección de rangos.
+**Ahora:** nuevo `BI_AtrArray()` (ATR de Wilder, causal) calcula ATR(14) real
+sobre las velas del `tfStructure`; `BI_DetectRange()` recibe `atrS[conf]` para
+`rangeMaxWidthATR` y `rangeTouchATR`. Se mantiene la alineación anti-look-ahead
+(el ATR en `conf` solo depende de barras ≤ conf).
+- Ficheros: `BI_Utils.mqh` (`BI_AtrArray`), `BI_Engine.mqh` (`BuildStructureLevels`).
+- Prueba: sección 16 (ATR(14) ≠ anchura de una vela; causalidad; acoplamiento al fuente).
+
+### Bug 2 — registro del rango antes de actualizar lastRHi/lastRLo  🔴
+La condición que registraba el rango para el dibujo (`m_srCount`) se evaluaba
+**después** de actualizar `lastRHi/lastRLo`, por lo que un rango cuyo máximo o
+mínimo había cambiado podía no registrarse.
+**Ahora:** se calcula `newRange = changedHi || changedLo` **antes** de tocar
+`lastRHi/lastRLo`, y estos se actualizan al final. No es un parche que repita
+comparaciones: se reordena el cálculo.
+- Ficheros: `BI_Engine.mqh` (`BuildStructureLevels`).
+- Prueba: sección 17 (versión con bug pierde registros; versión corregida no).
+
+### Bug 3 — el tope fijo descartaba niveles recientes  🔴
+Con `#define BI_MAX_STRUCT 600`, al llenarse 600 posiciones en orden cronológico
+se dejaban de añadir los niveles **más nuevos** (justo los relevantes).
+**Ahora:** se elimina el tope fijo; la capacidad se **dimensiona según el
+histórico procesado** (`cap = 4·nS + 64`, donde cada barra de estructura aporta
+como mucho 2 pivotes + 2 bordes de rango), de modo que no se descarta ningún
+nivel generado. No es un `600 → N` arbitrario.
+- Ficheros: `BI_Types.mqh` (se elimina el define), `BI_Engine.mqh`.
+- Prueba: sección 18 (un cap fijo pierde los recientes; la capacidad por historia los conserva).
+
+### Bug 4 — `minLevelAgeBars` con `firstIdx` fabricado  🔴
+`InjectStructureLevels()` hacía `firstIdx = k - minLevelAgeBars - 1`, fabricando
+antigüedad para que el nivel pasara el filtro de edad al instante.
+**Ahora:** se usa el índice **real** de conocimiento (`m_slKnownIdx[idx]`) como
+`firstIdx` y `knownIdx`. El filtro de `LevelEligible` (`k - firstIdx ≥
+minLevelAgeBars`) equivale entonces a exigir `knownIdx + minLevelAgeBars` antes
+de operar el nivel, sin inventar un pasado.
+- Ficheros: `BI_Engine.mqh` (`InjectStructureLevels`).
+- Prueba: sección 19 (no elegible de inmediato; elegible en knownIdx+minAge; el
+  firstIdx fabricado habría dado elegibilidad inmediata).
+
+### Bug 5 — `maxActiveSetups` superable con BUY y SELL  🔴
+`DetectBreakouts()` comprobaba el límite una sola vez al entrar y luego procesaba
+ambas direcciones, pudiendo crear un BUY y un SELL en la misma vela y superar el
+máximo en uno.
+**Ahora:** el límite se reevalúa (`break`) al inicio de cada dirección, así que
+tras crear el primer setup el segundo ya no se crea si se alcanzó el tope.
+- Ficheros: `BI_Engine.mqh` (`DetectBreakouts`).
+- Prueba: sección 20 (ocupación nunca supera max_active; con 3 vivos y máx 4 solo
+  se crea 1 en la vela).
+
+### No se tocó lo que ya pasaba
+Retesteo estricto (P2), score normalizado (P4), histórico separado (P3), sesiones,
+volumen TICK, pin bar y validación SL/TP permanecen igual y sus pruebas siguen
+pasando.
+
+### Verificación
+`mql5_lint.py`: 0 errores / 0 avisos (con prueba negativa). `logic_model_test.py`:
+**88 comprobaciones**, 0 fallos, en 20 bloques.
+
+### Pendiente (sin cambios)
+Compilación en MetaEditor y validación en MT5 real (CopyRates/CopyBuffer, H4/H1/M15
+con datos del broker, no-repintado en vivo, rendimiento). **No** debe declararse
+listo para producción sin ello.
+
+---
+
 ## v1.10 — Revisión y correcciones sobre v1.00
 
 Esta versión responde punto por punto a la revisión externa del proyecto. Cada

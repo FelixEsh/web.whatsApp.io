@@ -226,7 +226,9 @@ entrada si el score alcanza `InpMinScoreAlert` (65 por defecto).
    valor del «día anterior» es el del día cerrado, no el del día que se está
    formando. Las zonas de H1 (`BuildStructureLevels`) sólo se inyectan en la vela
    M15 cuya hora de cierre alcanza el cierre de la barra H1 que confirmó el pivote
-   o el rango.
+   o el rango. La detección de rangos de H1 usa un **ATR(14) real del propio H1**
+   (`BI_AtrArray`, suavizado de Wilder y causal: el ATR en la barra `conf` sólo
+   depende de barras ≤ `conf`), no la anchura de una única vela.
 5. La reconstrucción es **determinista**: se recorre toda la ventana con las
    mismas reglas en cada vela nueva. Para que el borde vivo sea estable, el
    indicador amplía automáticamente la ventana procesada a
@@ -271,6 +273,13 @@ se inyectan alineadas anti-look-ahead: una zona de H1 sólo influye en una vela
 M15 cuando su barra H1 ya está cerrada respecto al cierre de esa vela M15 (ver
 `BuildStructureLevels` en §4). Si `InpStructureTF` = timeframe del gráfico, las
 zonas se calculan sobre el propio gráfico (comportamiento de la v1.00).
+
+Una zona de estructura se registra con su índice **real** de conocimiento
+(`knownIdx`), sin fabricar antigüedad. Por tanto sólo pasa a ser operable cuando
+han transcurrido `minLevelAgeBars` velas del gráfico desde `knownIdx` (es decir,
+en `knownIdx + minLevelAgeBars`). El almacenamiento de niveles de estructura se
+dimensiona según el histórico procesado, de modo que los niveles más recientes
+—los relevantes para la señal actual— nunca se descartan por un tope fijo.
 
 ---
 

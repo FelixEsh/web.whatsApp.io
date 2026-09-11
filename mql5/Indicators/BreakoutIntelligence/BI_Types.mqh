@@ -5,13 +5,12 @@
 #ifndef __BI_TYPES_MQH__
 #define __BI_TYPES_MQH__
 
-#define BI_VERSION        "1.10"
+#define BI_VERSION        "1.11"
 #define BI_OBJ_PREFIX     "BI_"
 #define BI_MAX_LEVELS     120
 #define BI_MAX_SETUPS     32
 #define BI_MAX_EVENTS     256
 #define BI_ALERT_RING     64
-#define BI_MAX_STRUCT     600
 
 //--- Direccion de la operativa detectada
 enum ENUM_BI_DIR

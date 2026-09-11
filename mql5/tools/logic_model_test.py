@@ -123,7 +123,7 @@ def is_confirmation(bars, k, s):
             return 'STRUCTURE'
     return None
 
-def run(bars, levels, start=20, require_retest=True):
+def run(bars, levels, start=20, require_retest=True, max_active=999):
     """levels: lista de dicts {price, broken_dir}. Devuelve (setups, eventos)."""
     global atr
     atr = atr_series(bars)
@@ -175,6 +175,9 @@ def run(bars, levels, start=20, require_retest=True):
             continue
         body = bars[k].c - bars[k].o
         for d in (1, -1):
+            # Bug 5: el limite se reevalua ANTES de cada direccion
+            if sum(1 for s in setups if s.state in ('BREAKOUT', 'RETEST')) >= max_active:
+                break
             db = d * body
             if db <= 0 or db / rng < P['min_body']:
                 continue
@@ -698,6 +701,205 @@ r = compute_stops(1, 101.90, 101.85, 0.02, 0.01, 2.0, 0.10, 0.50)
 check("distancia menor que el stops level del broker se rechaza", r is None)
 check("el fuente marca slValid y no presenta SL invalido",
       'slValid' in eng and 'SYMBOL_TRADE_STOPS_LEVEL' in eng)
+
+# ============================================================== SECCION 16
+print("16) Bug 1 — ATR(14) real del TF de estructura")
+
+def wilder_atr(bars, period):
+    tr = []
+    for i, b in enumerate(bars):
+        hl = b.h - b.l
+        if i == 0:
+            tr.append(hl)
+        else:
+            pc = bars[i-1].c
+            tr.append(max(hl, abs(b.h - pc), abs(b.l - pc)))
+    atr = [0.0] * len(bars)
+    if len(bars) < period:
+        return atr
+    atr[period-1] = sum(tr[:period]) / period
+    for i in range(period, len(bars)):
+        atr[i] = (atr[i-1] * (period - 1) + tr[i]) / period
+    return atr
+
+# serie con una vela de rango enorme: el ATR(14) NO debe igualar esa vela suelta
+b = [bar(100, 100.5, 99.5, 100.1) for _ in range(20)]
+b[15] = bar(100, 110, 90, 100)          # vela gigante
+atr = wilder_atr(b, 14)
+single = b[15].h - b[15].l
+check("ATR(14) != anchura de una sola vela grande", abs(atr[15] - single) > 1.0,
+      "atr14=%.3f  vela=%.3f" % (atr[15], single))
+# causalidad: alterar una barra FUTURA no cambia el ATR de una barra anterior
+b2 = list(b); b2[18] = bar(100, 130, 70, 100)
+atr2 = wilder_atr(b2, 14)
+check("el ATR de estructura es causal (no mira barras futuras)",
+      abs(atr[15] - atr2[15]) < 1e-9)
+# acoplamiento con el fuente
+BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                    '..', 'Indicators', 'BreakoutIntelligence')
+eng = open(os.path.join(BASE, 'BI_Engine.mqh')).read()
+utl = open(os.path.join(BASE, 'BI_Utils.mqh')).read()
+check("el fuente calcula un ATR real del TF de estructura",
+      'BI_AtrArray(sr,nS,m_par.atrPeriod,atrS)' in eng)
+check("BI_DetectRange recibe atrS[conf], no la anchura de una vela",
+      'atrS[conf],m_par.rangeMaxWidthATR' in eng)
+check("ya NO se usa sr[conf].high-sr[conf].low como ATR",
+      'sr[conf].high-sr[conf].low' not in eng)
+check("BI_AtrArray usa suavizado de Wilder", 'period-1)+tr[i])/period' in utl)
+
+# ============================================================== SECCION 17
+print("17) Bug 2 — registro del rango antes de actualizar lastRHi/lastRLo")
+
+def register_buggy(seq, tol):
+    """Reproduce el ORDEN INCORRECTO: actualiza lastR* antes de comprobar."""
+    lastHi = lastLo = 0.0
+    registered = 0
+    for (rhi, rlo) in seq:
+        if abs(rhi - lastHi) > tol:
+            lastHi = rhi                    # <-- se actualiza demasiado pronto
+        if abs(rlo - lastLo) > tol:
+            lastLo = rlo
+        if (abs(rhi - lastHi) > tol) or (abs(rlo - lastLo) > tol):
+            registered += 1
+    return registered
+
+def register_fixed(seq, tol):
+    """Orden correcto: decide newRange antes de actualizar lastR*."""
+    lastHi = lastLo = 0.0
+    registered = 0
+    for (rhi, rlo) in seq:
+        changedHi = abs(rhi - lastHi) > tol
+        changedLo = abs(rlo - lastLo) > tol
+        newRange = changedHi or changedLo
+        if newRange:
+            registered += 1
+        if changedHi:
+            lastHi = rhi
+        if changedLo:
+            lastLo = rlo
+    return registered
+
+# secuencia: primer rango, luego cambia SOLO el maximo, luego SOLO el minimo
+seq = [(101.0, 100.0), (102.0, 100.0), (102.0, 99.0)]
+buggy = register_buggy(seq, 0.1)
+fixed = register_fixed(seq, 0.1)
+check("la version con el bug pierde registros de rango", buggy < 3, "buggy=%d" % buggy)
+check("la version corregida registra los 3 rangos", fixed == 3, "fixed=%d" % fixed)
+check("el fuente decide newRange antes de tocar lastRHi/lastRLo",
+      'const bool newRange' in eng and eng.index('const bool newRange') < eng.index('if(changedHi) lastRHi=rhi;'))
+
+# ============================================================== SECCION 18
+print("18) Bug 3 — capacidad segun historico, sin perder niveles recientes")
+
+def store_fixed_cap(n_items, cap):
+    """Cap fijo llenado en orden cronologico: descarta los MAS NUEVOS."""
+    stored = []
+    for i in range(n_items):
+        if len(stored) < cap:
+            stored.append(i)
+    return stored
+
+def store_history_sized(n_items, n_struct_bars):
+    """Capacidad derivada del historico (4*nS+64): entran todos."""
+    cap = 4 * n_struct_bars + 64
+    stored = []
+    for i in range(n_items):
+        if len(stored) < cap:
+            stored.append(i)
+    return stored
+
+# 900 niveles cronologicos, cap fijo 600 -> pierde del 600 al 899 (los recientes)
+fixed_cap = store_fixed_cap(900, 600)
+check("un cap fijo descarta los niveles MAS RECIENTES", 899 not in fixed_cap,
+      "ultimo guardado: %d" % fixed_cap[-1])
+# con 900 niveles surgidos de ~225 barras de estructura, la capacidad los cubre
+sized = store_history_sized(900, 225)
+check("la capacidad segun historico conserva el nivel mas reciente", 899 in sized)
+check("conserva TODOS los niveles generados", len(sized) == 900)
+check("el fuente dimensiona la capacidad con el historico (4*nS+64)",
+      'const int cap=4*nS+64' in eng)
+check("el fuente ya NO define un tope fijo BI_MAX_STRUCT",
+      'BI_MAX_STRUCT' not in eng and 'BI_MAX_STRUCT' not in open(os.path.join(BASE,'BI_Types.mqh')).read())
+
+# ============================================================== SECCION 19
+print("19) Bug 4 — antiguedad real del nivel, sin fabricar firstIdx")
+
+def eligible_age(k, known_idx, min_age):
+    """Semantica correcta: elegible cuando k - knownIdx >= minLevelAgeBars."""
+    return (k - known_idx) >= min_age
+
+MIN_AGE = 5
+known = 1000
+check("un nivel recien conocido NO es elegible de inmediato",
+      not eligible_age(known, known, MIN_AGE))
+check("no es elegible un paso antes del umbral",
+      not eligible_age(known + MIN_AGE - 1, known, MIN_AGE))
+check("es elegible exactamente en knownIdx + minLevelAgeBars",
+      eligible_age(known + MIN_AGE, known, MIN_AGE))
+# el comportamiento ANTIGUO (firstIdx = k - minAge - 1) lo hacia elegible al instante
+old_firstIdx = known - MIN_AGE - 1
+check("el firstIdx fabricado habria dado elegibilidad inmediata (bug)",
+      (known - old_firstIdx) >= MIN_AGE)
+check("el fuente ya NO fabrica firstIdx = k - minLevelAgeBars - 1",
+      'k-m_par.minLevelAgeBars-1' not in eng)
+check("el fuente usa el indice real de conocimiento (m_slKnownIdx[idx])",
+      'const int knownIdx=m_slKnownIdx[idx];' in eng and
+      'AddOrMerge(m_slPrice[idx],m_slKind[idx],knownIdx,knownIdx,tol)' in eng)
+
+# ============================================================== SECCION 20
+print("20) Bug 5 — maxActiveSetups no puede superarse con BUY y SELL")
+
+# Escenario: 1 solo slot libre y una vela que rompe DOS niveles opuestos a la vez.
+# Construimos una vela con cuerpo... imposible que una sola vela sea a la vez
+# BUY y SELL (el cuerpo tiene un signo). El caso real que hay que cubrir es:
+# ya hay setups vivos y quedan 0-1 slots; el motor procesa ambas direcciones.
+# Modelamos: nivel de resistencia (BUY) y de soporte roto en velas separadas,
+# con max_active pequeno, y comprobamos que nunca se superan los slots.
+rnd = random.Random(20)
+bars = make_range(40, seed=20)
+price = 101.0
+# generamos varias rupturas alcistas encadenadas sin retest para acumular vivos
+for n in range(8):
+    lvl = price
+    bars += [bar(lvl-0.10, lvl+0.80, lvl-0.15, lvl+0.75)]  # ruptura, queda en BREAKOUT
+    price += 1.0
+levels = [dict(price=101.0 + j, broken_dir=0) for j in range(8)]
+Setup._n = 0
+setups, events = run(bars, levels, require_retest=True, max_active=3)
+max_live = 0
+# recomputar la ocupacion maxima a lo largo del tiempo
+live = {}
+timeline = {}
+for (sid, kind, k) in events:
+    timeline.setdefault(k, []).append((sid, kind))
+alive = set()
+peak = 0
+# reconstruimos ocupacion por evento en orden
+ev_sorted = sorted(events, key=lambda e: e[2])
+state = {}
+for (sid, kind, k) in ev_sorted:
+    if kind == 'BREAKOUT':
+        alive.add(sid); state[sid] = 'live'
+    elif kind in ('INVALIDATED', 'EXPIRED', 'ENTRY'):
+        # ENTRY pasa a CONFIRMED (ya no cuenta como vivo de ruptura/retest)
+        alive.discard(sid)
+    peak = max(peak, len(alive))
+check("la ocupacion de setups vivos nunca supera max_active", peak <= 3,
+      "pico observado: %d (max 3)" % peak)
+check("el fuente reevalua el limite antes de cada direccion (break en el bucle)",
+      'if(LiveSetupCount()>=m_par.maxActiveSetups) break;' in eng)
+# prueba directa del invariante del bucle: con 3 vivos y max 4, tras crear BUY
+# la comprobacion >= impide crear SELL
+def loop_guard(live, mx):
+    created = 0
+    for _ in ('BUY', 'SELL'):
+        if live + created >= mx:
+            break
+        created += 1
+    return created
+check("con 3 vivos y max 4, solo se crea 1 en la vela (no 2)",
+      loop_guard(3, 4) == 1)
+check("con 2 vivos y max 4, se pueden crear los 2", loop_guard(2, 4) == 2)
 
 print()
 print("=" * 60)

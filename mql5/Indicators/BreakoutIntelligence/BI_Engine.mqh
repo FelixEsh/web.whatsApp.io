@@ -482,12 +482,20 @@ bool CBIEngine::BuildStructureLevels(void)
       return(false);
      }
 
-   //--- reserva generosa; se recorta al final
-   ArrayResize(m_slPrice,BI_MAX_STRUCT);
-   ArrayResize(m_slKind ,BI_MAX_STRUCT);
-   ArrayResize(m_slKnownIdx,BI_MAX_STRUCT);
-   ArrayResize(m_srHi,BI_MAX_STRUCT); ArrayResize(m_srLo,BI_MAX_STRUCT);
-   ArrayResize(m_srKnown,BI_MAX_STRUCT); ArrayResize(m_srBars,BI_MAX_STRUCT);
+   //--- Bug 1: ATR(14) REAL del TF de estructura (Wilder), no la anchura de una
+   //    sola vela. Es causal: atrS[conf] solo depende de barras <= conf.
+   double atrS[];
+   BI_AtrArray(sr,nS,m_par.atrPeriod,atrS);
+
+   //--- Bug 3: la capacidad se dimensiona segun el HISTORICO procesado, no con
+   //    un tope fijo que descartaria los niveles mas recientes. Cada barra de
+   //    estructura aporta como mucho 2 pivotes + 2 bordes de rango.
+   const int cap=4*nS+64;
+   ArrayResize(m_slPrice,cap);
+   ArrayResize(m_slKind ,cap);
+   ArrayResize(m_slKnownIdx,cap);
+   ArrayResize(m_srHi,cap); ArrayResize(m_srLo,cap);
+   ArrayResize(m_srKnown,cap); ArrayResize(m_srBars,cap);
    m_slCount=0; m_srCount=0;
    const double sigRatio=(double)structSec/(double)sigSec;
 
@@ -504,45 +512,50 @@ bool CBIEngine::BuildStructureLevels(void)
       const int kIdx=kc;
 
       //--- pivotes (n=conf+1 impide leer barras posteriores a conf)
-      if(BI_IsPivotHigh(sr,conf+1,sp,m_par.pivotDepth) && m_slCount<BI_MAX_STRUCT)
+      if(BI_IsPivotHigh(sr,conf+1,sp,m_par.pivotDepth) && m_slCount<cap)
         {
          m_slPrice[m_slCount]=sr[sp].high; m_slKind[m_slCount]=BI_LK_SWING;
          m_slKnownIdx[m_slCount]=kIdx; m_slCount++;
         }
-      if(BI_IsPivotLow(sr,conf+1,sp,m_par.pivotDepth) && m_slCount<BI_MAX_STRUCT)
+      if(BI_IsPivotLow(sr,conf+1,sp,m_par.pivotDepth) && m_slCount<cap)
         {
          m_slPrice[m_slCount]=sr[sp].low; m_slKind[m_slCount]=BI_LK_SWING;
          m_slKnownIdx[m_slCount]=kIdx; m_slCount++;
         }
 
       //--- rango del TF de estructura terminado en la barra "conf"
-      if(m_par.useRange)
+      if(m_par.useRange && atrS[conf]>0.0)
         {
          double rhi=0.0,rlo=0.0; int rbars=0;
-         //--- ATR local del TF de estructura aproximado por la anchura media
-         const double atrS=(sr[conf].high-sr[conf].low);
-         if(atrS>0.0 &&
-            BI_DetectRange(sr,conf+1,conf,m_par.rangeMinBars,m_par.rangeMaxBars,
-                           atrS>0.0?atrS:m_point,m_par.rangeMaxWidthATR,m_par.rangeTouchATR,
+         if(BI_DetectRange(sr,conf+1,conf,m_par.rangeMinBars,m_par.rangeMaxBars,
+                           atrS[conf],m_par.rangeMaxWidthATR,m_par.rangeTouchATR,
                            m_par.rangeMaxDrift,m_par.rangeMinTouchesSide,rhi,rlo,rbars))
            {
             const double tol=(rhi-rlo)*0.15+m_point;
-            if(MathAbs(rhi-lastRHi)>tol && m_slCount<BI_MAX_STRUCT)
+
+            //--- Bug 2: se decide si el rango es NUEVO antes de tocar lastRHi/lastRLo
+            const bool changedHi=(MathAbs(rhi-lastRHi)>tol);
+            const bool changedLo=(MathAbs(rlo-lastRLo)>tol);
+            const bool newRange =(changedHi || changedLo);
+
+            if(changedHi && m_slCount<cap)
               { m_slPrice[m_slCount]=rhi; m_slKind[m_slCount]=BI_LK_RANGE;
-                m_slKnownIdx[m_slCount]=kIdx; m_slCount++; lastRHi=rhi; }
-            if(MathAbs(rlo-lastRLo)>tol && m_slCount<BI_MAX_STRUCT)
+                m_slKnownIdx[m_slCount]=kIdx; m_slCount++; }
+            if(changedLo && m_slCount<cap)
               { m_slPrice[m_slCount]=rlo; m_slKind[m_slCount]=BI_LK_RANGE;
-                m_slKnownIdx[m_slCount]=kIdx; m_slCount++; lastRLo=rlo; }
+                m_slKnownIdx[m_slCount]=kIdx; m_slCount++; }
 
             //--- registro del rango para dibujar la caja (aprox. en barras M15)
-            if((MathAbs(rhi-lastRHi)>tol || MathAbs(rlo-lastRLo)>tol) &&
-               m_srCount<BI_MAX_STRUCT)
+            if(newRange && m_srCount<cap)
               {
                m_srHi[m_srCount]=rhi; m_srLo[m_srCount]=rlo;
                m_srKnown[m_srCount]=kIdx;
                m_srBars[m_srCount]=(int)MathRound(rbars*sigRatio);
                m_srCount++;
               }
+
+            if(changedHi) lastRHi=rhi;   // se actualiza DESPUES de decidir
+            if(changedLo) lastRLo=rlo;
            }
         }
      }
@@ -565,10 +578,13 @@ void CBIEngine::InjectStructureLevels(const int k)
    while(m_slCursor<m_slCount && m_slKnownIdx[m_slCursor]<=k)
      {
       const int idx=m_slCursor;
-      //--- barIdx retrasado para que el nivel ya cumpla la antiguedad minima:
-      //    una zona de H1 no es "nueva" cuando por fin la vemos en M15.
-      const int firstIdx=BI_MaxInt(0,k-m_par.minLevelAgeBars-1);
-      m_levels.AddOrMerge(m_slPrice[idx],m_slKind[idx],firstIdx,k,tol);
+      //--- Bug 4: NO se fabrica antiguedad. Se usa el indice REAL en que la zona
+      //    se hizo conocible (m_slKnownIdx[idx]) como firstIdx y knownIdx. El
+      //    filtro de LevelEligible (k - firstIdx >= minLevelAgeBars) equivale
+      //    asi a exigir knownIdx + minLevelAgeBars antes de operar el nivel,
+      //    sin adelantar el firstIdx a un pasado inventado.
+      const int knownIdx=m_slKnownIdx[idx];
+      m_levels.AddOrMerge(m_slPrice[idx],m_slKind[idx],knownIdx,knownIdx,tol);
       m_slCursor++;
      }
 
@@ -905,6 +921,11 @@ void CBIEngine::DetectBreakouts(const int k)
 
    for(int di=0;di<2;di++)
      {
+      //--- Bug 5: el limite se reevalua ANTES de cada direccion. Sin esto,
+      //    tras crear un setup BUY en esta vela la rama SELL podria crear otro
+      //    y superar maxActiveSetups en una sola barra.
+      if(LiveSetupCount()>=m_par.maxActiveSetups) break;
+
       const int dir=(di==0 ? BI_DIR_UP : BI_DIR_DOWN);
 
       //--- C2 y C3: calidad de la vela de ruptura

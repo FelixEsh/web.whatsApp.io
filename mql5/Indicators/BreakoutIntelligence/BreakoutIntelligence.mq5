@@ -6,7 +6,7 @@
 //|  operaciones. Todas las senales se generan sobre velas CERRADAS. |
 //+------------------------------------------------------------------+
 #property copyright "Breakout Intelligence MT5"
-#property version   "1.10"
+#property version   "1.11"
 #property description "Rango -> Ruptura -> Validacion -> Retesteo -> Confirmacion -> Alerta"
 #property description "Senales calculadas solo sobre velas cerradas. No es un sistema automatico."
 #property indicator_chart_window

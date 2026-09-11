@@ -221,4 +221,36 @@ string BI_TfText(const ENUM_TIMEFRAMES tf)
 int BI_MaxInt(const int a,const int b) { return(a>b ? a : b); }
 int BI_MinInt(const int a,const int b) { return(a<b ? a : b); }
 
+
+//+------------------------------------------------------------------+
+//| ATR(period) de Wilder sobre un array de MqlRates alineado por la  |
+//| derecha. Es CAUSAL: dest[i] solo depende de barras <= i, por lo   |
+//| que puede usarse para el TF de estructura sin look-ahead.         |
+//| Sembrado con la media simple de los primeros `period` TR, como    |
+//| iATR de MT5. dest[i]=0 mientras no haya datos suficientes.        |
+//+------------------------------------------------------------------+
+void BI_AtrArray(const MqlRates &r[],const int n,const int period,double &dest[])
+  {
+   ArrayResize(dest,n);
+   ArrayInitialize(dest,0.0);
+   if(n<=0 || period<=0 || n<period) return;
+
+   double tr[];
+   ArrayResize(tr,n);
+   for(int i=0;i<n;i++)
+     {
+      const double hl=r[i].high-r[i].low;
+      if(i==0) { tr[i]=hl; continue; }
+      const double hc=MathAbs(r[i].high-r[i-1].close);
+      const double lc=MathAbs(r[i].low -r[i-1].close);
+      tr[i]=MathMax(hl,MathMax(hc,lc));
+     }
+
+   double sum=0.0;
+   for(int i=0;i<period;i++) sum+=tr[i];
+   dest[period-1]=sum/period;                          // siembra (SMA de TR)
+   for(int i=period;i<n;i++)
+      dest[i]=(dest[i-1]*(period-1)+tr[i])/period;      // suavizado de Wilder
+  }
+
 #endif // __BI_UTILS_MQH__
