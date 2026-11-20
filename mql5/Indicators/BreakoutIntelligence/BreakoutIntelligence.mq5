@@ -34,12 +34,12 @@
 //--- Plot 2: retesteo alcista
 #property indicator_label3  "Retesteo alcista"
 #property indicator_type3   DRAW_ARROW
-#property indicator_color3  clrDodgerBlue
+#property indicator_color3  clrAqua
 #property indicator_width3  1
 //--- Plot 3: retesteo bajista
 #property indicator_label4  "Retesteo bajista"
 #property indicator_type4   DRAW_ARROW
-#property indicator_color4  clrDodgerBlue
+#property indicator_color4  clrAqua
 #property indicator_width4  1
 //--- Plot 4: setup confirmado alcista
 #property indicator_label5  "Setup BUY"
@@ -166,6 +166,12 @@ input int              InpMaxLevelsDrawn     = 8;      // Niveles dibujados como
 input int              InpPanelX             = 12;     // Panel: desplazamiento X
 input int              InpPanelY             = 18;     // Panel: desplazamiento Y
 input int              InpFontSize           = 9;      // Tamano de fuente
+input bool             InpShowBreakoutArrows = true;   // Flechas de ruptura
+input bool             InpShowRetestArrows   = false;  // Flechas de retesteo (ruido; por defecto off)
+input bool             InpShowEntryArrows    = true;   // Flechas de setup confirmado
+input int              InpSignalMaxAgeBars   = 0;      // Antiguedad maxima de las flechas (0=todas)
+input int              InpFadeSetupBars      = 40;     // Atenuar confirmados mas viejos que N velas
+input bool             InpMarkInvalidations  = true;   // Marcar invalidacion / caducidad
 
 //+------------------------------------------------------------------+
 //| BUFFERS                                                          |
@@ -359,7 +365,8 @@ int OnInit()
    g_render.Configure(_Symbol,(ENUM_TIMEFRAMES)Period(),g_par.tfContext,g_par.tfStructure,_Digits,g_profile,
                       InpShowLevels,InpShowRange,InpShowZones,InpShowPanel,
                       BI_ClampInt(InpMaxLevelsDrawn,0,40),
-                      InpPanelX,InpPanelY,BI_ClampInt(InpFontSize,6,20));
+                      InpPanelX,InpPanelY,BI_ClampInt(InpFontSize,6,20),
+                      BI_ClampInt(InpFadeSetupBars,0,5000),InpMarkInvalidations);
    g_render.Clear();
 
    IndicatorSetInteger(INDICATOR_DIGITS,_Digits);
@@ -410,12 +417,22 @@ void FillBuffers(const int rates_total,const double &high[],const double &low[])
 
    //--- P3: las flechas se llenan desde el HISTORICO de senales, no desde los
    //    setups vivos (limitados a 32). Asi ninguna senal antigua desaparece.
+   //    Filtros de VISUALIZACION (no afectan a la logica ni al motor):
+   //    toggles por tipo de flecha y antiguedad maxima configurable.
+   const int lastClosed=g_engine.LastClosedIdx();
    const int nsig=g_engine.SignalCount();
    for(int i=0;i<nsig;i++)
      {
       SBISignal g=g_engine.SignalAt(i);
       const int ci=offset+g.barIdx;
       if(ci<0 || ci>=rates_total) continue;
+
+      //--- antiguedad maxima (0 = sin limite)
+      if(InpSignalMaxAgeBars>0 && (lastClosed-g.barIdx)>InpSignalMaxAgeBars) continue;
+      //--- toggles por tipo
+      if(g.type==BI_EV_BREAKOUT && !InpShowBreakoutArrows) continue;
+      if(g.type==BI_EV_RETEST   && !InpShowRetestArrows)   continue;
+      if(g.type==BI_EV_ENTRY    && !InpShowEntryArrows)    continue;
 
       if(g.type==BI_EV_BREAKOUT)
         {

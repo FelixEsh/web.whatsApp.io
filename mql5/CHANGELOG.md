@@ -1,5 +1,42 @@
 # Changelog — Breakout Intelligence MT5
 
+## UI — mejoras de visualizacion (sobre v1.11, solo capa de dibujo)
+
+Cambios **solo de representacion** para hacer el grafico legible. No se toca la
+logica del motor: BI_Engine/BI_Levels/BI_Profile/BI_Types quedan byte a byte
+identicos (verificado). Afecta a `BI_Render.mqh` y a la capa de dibujo del
+`.mq5` (propiedades de plots, inputs de visualizacion y FillBuffers).
+
+- **Historico vs vigente.** El setup aun en juego (BREAKOUT/RETEST) se resalta
+  con un borde dorado y una etiqueta "VIGENTE <lado> - <estado>". Los setups
+  confirmados recientes mantienen color; los mas viejos que `InpFadeSetupBars`
+  (40 por defecto) se atenuan (contorno sin relleno + etiqueta en gris). Asi una
+  confirmacion antigua ya no se confunde con una oportunidad actual.
+- **Invalidacion / caducidad visibles.** Antes no dejaban marca. Ahora los
+  setups recientes invalidados o caducados muestran "x invalidado" (rojo) o
+  "x caducado" (gris) en su barra de cierre. `InpMarkInvalidations` lo controla.
+  (Solo recientes: estos estados no van a los buffers, salen del array de setups
+  vivos.)
+- **Colisiones de color resueltas.** Las flechas de retesteo pasan de azul
+  (DodgerBlue, que coincidia con el nivel de rango) a cian (Aqua). La zona de un
+  setup vivo pasa de dorado (que coincidia con las flechas de ruptura) a gris
+  neutro; los confirmados siguen en verde/rojo.
+- **Niveles H1 identificables.** En modo estructura, las lineas swing/rango
+  provienen del TF superior; su etiqueta ahora lo indica (p.ej. "Estructura x2
+  H1"). Los niveles rotos se marcan "(roto)". (H4 sigue siendo solo contexto
+  EMA, sin linea propia, como estaba.)
+- **Menos saturacion.** Nuevos toggles de flechas: `InpShowBreakoutArrows`
+  (on), `InpShowRetestArrows` (off por defecto, eran las mas ruidosas),
+  `InpShowEntryArrows` (on), y `InpSignalMaxAgeBars` (0=todas) para limitar las
+  flechas a las ultimas N velas.
+- **Panel legible.** Fondo oscuro detras del texto del panel para que no se
+  confunda con las velas.
+
+Sin cambios de version en codigo (BI_VERSION sigue en 1.11): es una iteracion de
+UI, no de logica. Pendiente, como siempre: validacion real en MT5.
+
+---
+
 ## v1.11 — Correcciones de la 2.ª revisión (5 bugs del motor de estructura)
 
 Segunda ronda de revisión externa. Se corrigen **exactamente** los cinco bugs
